@@ -1,3 +1,9 @@
+> **Nawantara workspace deployment:** this application lives at `apps/nawantara-webui/`
+> inside `nawantara-workspace`. Use the workspace [setup](../../docs/setup.md),
+> [development workflow](../../docs/development.md) and [user flows](../../docs/user-flows.md).
+> The reference material below describes the application itself. Standalone deployment
+> instructions do not configure the integrated workspace or its Nextcloud connector.
+
 # Open WebUI 👋
 
 ![GitHub stars](https://img.shields.io/github/stars/open-webui/open-webui?style=social)

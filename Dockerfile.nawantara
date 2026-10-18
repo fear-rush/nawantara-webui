@@ -3,12 +3,17 @@ WORKDIR /app
 ENV CYPRESS_INSTALL_BINARY=0 NODE_OPTIONS=--max-old-space-size=6144
 COPY package.json package-lock.json ./
 RUN npm ci --force
-COPY . .
+COPY src ./src
+COPY static ./static
+COPY scripts ./scripts
+COPY crypto ./crypto
+COPY svelte.config.js vite.config.ts tailwind.config.js postcss.config.js tsconfig.json ./
 RUN npm run crypto:verify && npx vite build
 
 FROM ghcr.io/open-webui/open-webui:v0.12.3@sha256:a537bbe1e6b428820f52ed4a029d7fff97062e24d5cf32c365fba36fd0542def
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-ind poppler-utils && rm -rf /var/lib/apt/lists/*
 RUN rm -rf /app/build/_app
 COPY --from=frontend /app/build /app/build
 COPY backend/open_webui /app/backend/open_webui
-COPY backend/nawantara_activity.py /app/backend/nawantara_activity.py
+COPY backend/nawantara_nextcloud /app/backend/nawantara_nextcloud
 ENV WEBUI_NAME=Nawantara

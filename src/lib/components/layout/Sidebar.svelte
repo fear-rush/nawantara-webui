@@ -1034,6 +1034,11 @@
 						</Tooltip>
 					</div>
 
+					<Tooltip content="Nextcloud files" placement="right">
+                        <a href="/nextcloud" class="flex size-8 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900" aria-label="Nextcloud files">
+                            <svg aria-hidden="true" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 18h12a4 4 0 0 0 .5-8A7 7 0 0 0 5 9a4.5 4.5 0 0 0 1 9Z" /></svg>
+                        </a>
+                    </Tooltip>
 					{#each pinnedItems as itemId (itemId)}
 						{@const meta = getMenuItemMeta(itemId)}
 						{#if meta && isMenuItemVisible(itemId)}
@@ -1260,7 +1265,8 @@
 						</div>
 
 						<div id="pinned-menu-items-list">
-							{#each pinnedItems as itemId (itemId)}
+							<a href="/nextcloud" class="flex rounded-lg px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-850" aria-label="Nextcloud files">Nextcloud</a>
+					{#each pinnedItems as itemId (itemId)}
 								{@const meta = getMenuItemMeta(itemId)}
 								{#if meta && isMenuItemVisible(itemId)}
 									<div

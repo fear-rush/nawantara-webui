@@ -690,6 +690,10 @@ async def get_builtin_tools(
             'type': 'builtin',
         }
 
+    from nawantara_nextcloud.tools import TOOLS as nextcloud_tools
+    if get_model_capability('builtin_tools'):
+        builtin_functions.extend(nextcloud_tools)
+
     # Time utilities - available for date calculations
     if is_builtin_tool_enabled('time'):
         builtin_functions.extend([get_current_timestamp, calculate_timestamp])

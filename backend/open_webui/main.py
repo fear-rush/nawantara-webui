@@ -504,7 +504,16 @@ async def lifespan(app: FastAPI):
     app.state.startup_complete = True
     await publish_event(app, EVENTS.SYSTEM_STARTUP_COMPLETED, source='system')
 
-    yield
+    from nawantara_nextcloud.runtime import start as start_nextcloud
+    nextcloud_task = start_nextcloud(app)
+    try:
+        yield
+    finally:
+        nextcloud_task.cancel()
+        try:
+            await nextcloud_task
+        except asyncio.CancelledError:
+            pass
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_STARTED, source='system')
     await app_connections.close()
@@ -3112,8 +3121,8 @@ async def check_db_health():
     return {'status': True}
 
 
-from nawantara_activity import install
-install(app)
+from nawantara_nextcloud.router import router as nextcloud_router
+app.include_router(nextcloud_router)
 
 # --- static assets & files ---
 # Windows registry entries can override these with text/plain, which breaks module and wasm loading
