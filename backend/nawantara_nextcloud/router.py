@@ -229,41 +229,6 @@ async def change_event(request: Request) -> dict:
     return {'accepted': True, 'accounts_notified': count}
 
 
-class AnalysisForm(BaseModel):
-    paths: list[str] = Field(min_length=1, max_length=10)
-    code: str = Field(min_length=1, max_length=40000)
-
-
-@router.post('/analysis')
-async def analyze(body: AnalysisForm, request: Request, user: UserModel = Depends(session)) -> dict:
-    from . import analysis
-
-    return await safe_call(analysis.run(await service(request.app), user.id, body.paths, body.code))
-
-
-@router.get('/analysis/{run_id}/files/{name}')
-async def analysis_file(run_id: str, name: str, request: Request, user: UserModel = Depends(session)):
-    from urllib.parse import quote
-
-    from fastapi.responses import Response
-
-    from .analysis import file_bytes
-
-    try:
-        data = file_bytes(store(request.app), user.id, run_id, name)
-    except ValueError:
-        raise HTTPException(404, 'Analysis file unavailable') from None
-    return Response(
-        data,
-        media_type='application/octet-stream',
-        headers={
-            'Content-Disposition': "attachment; filename*=UTF-8''" + quote(name, safe=''),
-            'Cache-Control': 'no-store',
-            'X-Content-Type-Options': 'nosniff',
-        },
-    )
-
-
 @router.get('/actions/tools')
 async def action_tools(request: Request, user: UserModel = Depends(session)) -> dict:
     from .actions import mcp
@@ -308,30 +273,3 @@ async def action_confirm(
     from .actions import confirm
 
     return await safe_call(confirm(store(request.app), user.id, action_id, body.approve))
-
-
-class AnalysisSaveForm(BaseModel):
-    run_id: str = Field(max_length=64)
-    name: str = Field(max_length=200)
-    path: str = Field(min_length=2, max_length=1000)
-
-
-@router.post('/analysis/save')
-async def save_analysis(body: AnalysisSaveForm, request: Request, user: UserModel = Depends(session)) -> dict:
-    from .analysis import file_bytes
-
-    db = store(request.app)
-    try:
-        file_bytes(db, user.id, body.run_id, body.name)
-        job_id = db.enqueue(
-            user.id,
-            'save',
-            {
-                'path': path_name(body.path),
-                'analysis_id': body.run_id,
-                'analysis_file': body.name,
-            },
-        )
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from None
-    return {'job_id': job_id}

@@ -49,8 +49,6 @@ class Store:
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, operation TEXT NOT NULL,
                     payload BLOB NOT NULL, status TEXT NOT NULL, result BLOB NOT NULL,
                     created REAL NOT NULL, updated REAL NOT NULL);
-                CREATE TABLE IF NOT EXISTS analysis_runs (
-                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, result BLOB NOT NULL, created REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS index_notifications (user_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS processing_state (name TEXT PRIMARY KEY, value REAL NOT NULL);
             """)
@@ -107,7 +105,6 @@ class Store:
         self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('DELETE FROM connections WHERE user_id=?', (user_id,))
-            db.execute('DELETE FROM analysis_runs WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM action_proposals WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM index_notifications WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM exclusions WHERE user_id=?', (user_id,))

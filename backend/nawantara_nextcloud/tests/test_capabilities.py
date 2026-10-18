@@ -1,6 +1,5 @@
-"""Change notifications, approvals and generated files preserve user boundaries."""
+"""Change notifications and approvals preserve user boundaries."""
 
-import base64
 import json
 import sys
 import tempfile
@@ -12,7 +11,6 @@ from cryptography.fernet import Fernet
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from nawantara_nextcloud.actions import claim, listing
-from nawantara_nextcloud.analysis import file_bytes
 from nawantara_nextcloud.events import dispatch, notify
 from nawantara_nextcloud.store import Store
 
@@ -89,25 +87,6 @@ class CapabilityBehavior(unittest.TestCase):
         self.assertEqual(listing(self.store, 'alice')[0]['status'], 'uncertain')
         with self.assertRaises(ValueError):
             claim(self.store, 'alice', 'action', True)
-
-    def test_generated_files_are_owned_and_removed_on_disconnect(self):
-        result = {'files': [{'name': 'report.csv', 'data': base64.b64encode(b'private').decode()}]}
-        with self.store.db() as db:
-            db.execute(
-                'INSERT INTO analysis_runs VALUES (?,?,?,?)',
-                (
-                    'run',
-                    'alice',
-                    self.store.cipher.encrypt(json.dumps(result).encode()),
-                    time.time(),
-                ),
-            )
-        with self.assertRaises(ValueError):
-            file_bytes(self.store, 'bob', 'run', 'report.csv')
-        self.assertEqual(file_bytes(self.store, 'alice', 'run', 'report.csv'), b'private')
-        self.store.disconnect('alice')
-        with self.assertRaises(ValueError):
-            file_bytes(self.store, 'alice', 'run', 'report.csv')
 
 
 class VersionListingBehavior(unittest.IsolatedAsyncioTestCase):

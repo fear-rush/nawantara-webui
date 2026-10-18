@@ -63,7 +63,7 @@ Search modes, snapshots and reciprocal-rank fusion live in `search.py`. FFF's
 Python binding runs with AI mode off; invalid regex fallback results must be
 rejected. `evidence.py` handles current-access-checked version comparison.
 `actions.py` restricts Context Agent MCP operations and stores owner-confirmed
-proposals. Never add the confirmation endpoint as a model tool. `analysis.py`
-passes selected bytes to the fixed-image broker and stores private generated files.
+proposals. Never add the confirmation endpoint as a model tool. Research Skills
+guide destination suggestions and cited saving; no code execution service is used.
 `events.py` coalesces authenticated file notifications without treating event data
 as an access grant. Rebuild runtime images after changing pinned dependencies.

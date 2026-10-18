@@ -76,16 +76,11 @@ async def execute(app: FastAPI, job: dict) -> None:
                 result = await api.index(job, account, cloud)
             else:
                 payload = job['payload']
-                if payload.get('analysis_id'):
-                    from .analysis import file_bytes
-
-                    data = file_bytes(db, job['user_id'], payload['analysis_id'], payload['analysis_file'])
-                else:
-                    data = (
-                        await attachment(job['user_id'], payload['file_id'])
-                        if payload.get('file_id')
-                        else payload['text'].encode()
-                    )
+                data = (
+                    await attachment(job['user_id'], payload['file_id'])
+                    if payload.get('file_id')
+                    else payload['text'].encode()
+                )
                 result = await api.save(job, cloud, data)
                 if not db.cancelled(job['id']):
                     result['index_job_id'] = db.enqueue(job['user_id'], 'index', {}, origin='followup')
