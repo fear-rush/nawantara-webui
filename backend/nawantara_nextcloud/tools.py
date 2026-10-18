@@ -6,12 +6,14 @@ from open_webui.models.users import UserModel
 from . import router
 
 
-async def search_nextcloud(query: str, __request__: Request, __user__: dict) -> dict:
+async def search_nextcloud(query: str, __request__: Request, __user__: dict, mode: str = 'hybrid') -> dict:
     """Find passages in indexed Nextcloud files you can currently read. Cite returned source URLs.
 
     :param query: A question or search phrase.
+    :param mode: Explicit search mode: hybrid, semantic, keyword, literal, regex, fuzzy, filename.
+        Literal never switches to fuzzy.
     """
-    return await router.search(__request__, query, UserModel(**__user__))
+    return await router.search(__request__, query, UserModel(**__user__), mode)
 
 
 async def list_nextcloud_files(path: str, __request__: Request, __user__: dict) -> dict:
@@ -57,8 +59,98 @@ async def nextcloud_job_status(__request__: Request, __user__: dict) -> dict:
     return await router.jobs(__request__, UserModel(**__user__))
 
 
+async def list_nextcloud_versions(path: str, __request__: Request, __user__: dict) -> dict:
+    """List retained versions of a currently accessible source. Does not restore or modify it.
+
+    :param path: Absolute path of the source file.
+    """
+    return await router.versions(__request__, path, UserModel(**__user__))
+
+
+async def compare_nextcloud_documents(
+    left: str,
+    right: str,
+    __request__: Request,
+    __user__: dict,
+    left_version: str = '',
+    right_version: str = '',
+) -> dict:
+    """Compare extracted text from two accessible files or retained versions. Cite both source revisions.
+
+    :param left: Absolute path of the first file.
+    :param right: Absolute path of the second file; may be the same file for version comparison.
+    :param left_version: Version identifier from list_nextcloud_versions; empty means current.
+    :param right_version: Version identifier from list_nextcloud_versions; empty means current.
+    """
+    return await router.compare(__request__, left, right, left_version, right_version, UserModel(**__user__))
+
+
+async def analyze_nextcloud_files(paths: list[str], code: str, __request__: Request, __user__: dict) -> dict:
+    """Analyze deliberately selected documents in a fresh isolated Python container, not the WebUI host.
+
+    :param paths: One to ten Nextcloud files selected for this analysis, at most 20 MiB total.
+    :param code: Python, at most 40000 characters. Inputs are in /work by basename. Write deliverables
+        as regular files directly inside /work/output. pandas, openpyxl, matplotlib, fff, rg and jq
+        are installed. No network; 512 MiB RAM; 35 seconds. Output files remain private.
+    """
+    return await router.analyze(router.AnalysisForm(paths=paths, code=code), __request__, UserModel(**__user__))
+
+
+async def list_nextcloud_actions(__request__: Request, __user__: dict) -> dict:
+    """Discover the selected Nextcloud calendar, task and folder tools with their argument schemas."""
+    return await router.action_tools(__request__, UserModel(**__user__))
+
+
+async def read_nextcloud_action(operation: str, arguments: dict, __request__: Request, __user__: dict) -> dict:
+    """Run a read-only calendar/task operation discovered with list_nextcloud_actions.
+
+    :param operation: Read operation name from list_nextcloud_actions.
+    :param arguments: Arguments matching that operation's schema.
+    """
+    return await router.action_read(
+        router.ActionForm(operation=operation, arguments=arguments), __request__, UserModel(**__user__)
+    )
+
+
+async def propose_nextcloud_action(operation: str, arguments: dict, __request__: Request, __user__: dict) -> dict:
+    """Prepare a requested Nextcloud action for the user to review in Nextcloud > Actions.
+
+    This DOES NOT execute the operation. Only the user can approve it in the interface.
+    :param operation: Write operation name from list_nextcloud_actions.
+    :param arguments: Complete proposed arguments matching the operation's schema.
+    """
+    return await router.action_propose(
+        router.ActionForm(operation=operation, arguments=arguments), __request__, UserModel(**__user__)
+    )
+
+
+async def save_nextcloud_analysis_file(
+    run_id: str,
+    name: str,
+    path: str,
+    __request__: Request,
+    __user__: dict,
+) -> dict:
+    """Publish one owned analysis output only when explicitly requested for this destination.
+
+    :param run_id: Analysis run ID returned by analyze_nextcloud_files.
+    :param name: Exact generated filename returned by that run.
+    :param path: Exact new Nextcloud destination. Existing files are never overwritten.
+    """
+    return await router.save_analysis(
+        router.AnalysisSaveForm(run_id=run_id, name=name, path=path), __request__, UserModel(**__user__)
+    )
+
+
 TOOLS = [
     search_nextcloud,
+    save_nextcloud_analysis_file,
+    list_nextcloud_actions,
+    read_nextcloud_action,
+    propose_nextcloud_action,
+    analyze_nextcloud_files,
+    list_nextcloud_versions,
+    compare_nextcloud_documents,
     list_nextcloud_files,
     read_nextcloud_file,
     save_nextcloud_text,

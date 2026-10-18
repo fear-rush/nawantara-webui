@@ -25,6 +25,7 @@
 		{ id: 'search', label: 'Search' },
 		{ id: 'save', label: 'Save findings' },
 		{ id: 'activity', label: 'Activity' },
+		{ id: 'actions', label: 'Actions' },
 		{ id: 'connection', label: 'Connection' }
 	];
 	let username = '';
@@ -32,6 +33,7 @@
 	let scopes = '/Documents';
 	let folder = '/';
 	let query = '';
+	let searchMode = 'hybrid';
 	let destination = '/Documents/findings.md';
 	let text = '';
 	let error = '';
@@ -43,6 +45,16 @@
 	let files: CloudFile[] = [];
 	let sources: CloudSource[] = [];
 	let jobs: Job[] = [];
+	let proposals: {
+		id: string;
+		operation: string;
+		status: string;
+		created: number;
+		arguments: Record<string, unknown>;
+		result: unknown;
+	}[] = [];
+	let proposalId = '';
+	let confirmAction = false;
 	let jobFilter = '';
 	let jobId = '';
 	let showDetail = false;
@@ -61,12 +73,21 @@
 			undefined,
 			controller.signal
 		);
+		const pending = result.connected
+			? await nextcloud<{ actions: typeof proposals }>(
+					'/actions',
+					'GET',
+					undefined,
+					controller.signal
+				)
+			: { actions: [] };
 		const items = result.connected
 			? (await nextcloud<{ jobs: Job[] }>('/jobs', 'GET', undefined, controller.signal)).jobs
 			: [];
 		if (current !== revision || controller.signal.aborted) return;
 		connection = result;
 		jobs = items;
+		proposals = pending.actions;
 		if (!result.connected) {
 			files = [];
 			sources = [];
@@ -104,7 +125,7 @@
 	async function search() {
 		sources = (
 			await nextcloud<{ sources: CloudSource[] }>(
-				`/search?query=${encodeURIComponent(query)}`,
+				`/search?query=${encodeURIComponent(query)}&mode=${searchMode}`,
 				'GET',
 				undefined,
 				controller.signal
@@ -175,6 +196,25 @@
 
 <svelte:head><title>Nextcloud / {$WEBUI_NAME}</title></svelte:head>
 <JobDetail bind:show={showDetail} {jobId} />
+<ConfirmDialog
+	bind:show={confirmAction}
+	title="Execute this Nextcloud action?"
+	message="The operation will run with the exact arguments shown in the proposal under your connected account. Calendar attendees may receive invitations."
+	confirmLabel="Execute action"
+	onConfirm={() =>
+		action(async () => {
+			const result = await nextcloud<{ status: string }>(
+				`/actions/${proposalId}/confirm`,
+				'POST',
+				{ approve: true },
+				controller.signal
+			);
+			message =
+				result.status === 'completed'
+					? 'Action completed.'
+					: 'Outcome uncertain. Check Nextcloud before creating another proposal.';
+		})}
+/>
 <ConfirmDialog
 	bind:show={confirmDisconnect}
 	title="Disconnect Nextcloud?"
@@ -341,7 +381,18 @@
 									placeholder="Ask a question or search your documents"
 								/>
 							</div>
-							<button class={ui.primary} disabled={busy}>Search</button>
+							<label class="shrink-0"
+								><span class="sr-only">Search mode</span><select
+									class={ui.input}
+									bind:value={searchMode}
+								>
+									<option value="hybrid">Hybrid</option><option value="semantic">Semantic</option
+									><option value="keyword">Keyword</option><option value="literal">Literal</option
+									><option value="regex">Regex</option><option value="fuzzy">Fuzzy</option><option
+										value="filename">Filename</option
+									>
+								</select></label
+							><button class={ui.primary} disabled={busy}>Search</button>
 						</form>
 						{#if searched}<p class="text-xs text-gray-500">
 								{sources.length} matching passages
@@ -358,6 +409,10 @@
 										>{source.path}</span
 									><ArrowUpRight className="rotate-90 size-3.5 shrink-0" /></a
 								>
+								<p class="text-xs text-gray-500">
+									Passage {source.passage}, extracted characters {source.character_start}–{source.character_end}.
+									Revision {source.revision}
+								</p>
 								<p
 									class="text-sm leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-wrap"
 								>
@@ -386,6 +441,59 @@
 									Check your indexing folders and processing jobs, or refresh the index.
 								</p>
 							</div>{/if}
+					</section>
+				{:else if connection.connected && tab === 'actions'}
+					<section class="space-y-3">
+						<h2 class="text-sm font-medium">Proposed actions</h2>
+						<p class="text-xs text-gray-500">
+							Ask the assistant to prepare a folder, task or calendar action. Review its arguments
+							here before execution. Proposals expire after one hour.
+						</p>
+						{#each proposals as proposal (proposal.id)}
+							<article class="{ui.panel} space-y-2">
+								<div class="flex items-center justify-between gap-2">
+									<span class="text-sm font-medium">{label(proposal.operation)}</span><Badge
+										type={badge(proposal.status)}
+										content={label(proposal.status)}
+									/>
+								</div>
+								<p class="text-xs text-gray-500">{date(proposal.created)}</p>
+								<pre class="text-xs whitespace-pre-wrap break-words">{JSON.stringify(
+										proposal.arguments,
+										null,
+										2
+									)}</pre>
+								{#if proposal.status === 'pending'}<div class="flex gap-2">
+										<button
+											class={ui.primary}
+											disabled={busy}
+											on:click={() => {
+												proposalId = proposal.id;
+												confirmAction = true;
+											}}>Review and execute</button
+										>
+										<button
+											class={ui.button}
+											disabled={busy}
+											on:click={() =>
+												action(async () => {
+													await nextcloud(
+														`/actions/${proposal.id}/confirm`,
+														'POST',
+														{ approve: false },
+														controller.signal
+													);
+													message = 'Proposal rejected.';
+												})}>Reject</button
+										>
+									</div>
+								{:else}<pre class="text-xs whitespace-pre-wrap break-words">{JSON.stringify(
+											proposal.result,
+											null,
+											2
+										)}</pre>{/if}
+							</article>
+						{:else}<p class="text-xs text-gray-500 py-8 text-center">No proposed actions</p>{/each}
 					</section>
 				{:else if connection.connected && tab === 'save'}
 					<section class="max-w-3xl space-y-4">

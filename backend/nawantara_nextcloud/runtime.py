@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from .embeddings import BASE_URL, INDEX_MODEL, MODEL, Purpose, encode
+from .events import dispatch
 from .service import Service
 from .store import Store
 
@@ -75,11 +76,16 @@ async def execute(app: FastAPI, job: dict) -> None:
                 result = await api.index(job, account, cloud)
             else:
                 payload = job['payload']
-                data = (
-                    await attachment(job['user_id'], payload['file_id'])
-                    if payload.get('file_id')
-                    else payload['text'].encode()
-                )
+                if payload.get('analysis_id'):
+                    from .analysis import file_bytes
+
+                    data = file_bytes(db, job['user_id'], payload['analysis_id'], payload['analysis_file'])
+                else:
+                    data = (
+                        await attachment(job['user_id'], payload['file_id'])
+                        if payload.get('file_id')
+                        else payload['text'].encode()
+                    )
                 result = await api.save(job, cloud, data)
                 if not db.cancelled(job['id']):
                     result['index_job_id'] = db.enqueue(job['user_id'], 'index', {}, origin='followup')
@@ -118,6 +124,7 @@ async def run(app: FastAPI) -> None:
         heartbeat = asyncio.create_task(pulse())
         try:
             while True:
+                dispatch(store(app))
                 for user_id in store(app).due_accounts():
                     store(app).enqueue(user_id, 'index', {}, origin='scheduled')
                     store(app).synced(user_id)
@@ -129,6 +136,7 @@ async def run(app: FastAPI) -> None:
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
+            store(app).search.close()
 
 
 def start(app: FastAPI) -> asyncio.Task:

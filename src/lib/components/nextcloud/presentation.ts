@@ -11,6 +11,7 @@ export const ui = {
 const names: Record<string, string> = {
 	index: 'Index refresh',
 	scheduled: 'Scheduled index refresh',
+	event: 'Nextcloud change queued indexing',
 	connection: 'Account connection requested indexing',
 	followup: 'Saved file queued for indexing',
 	save: 'Save to Nextcloud',

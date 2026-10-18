@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from pathlib import PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 from xml.etree import ElementTree as ET
@@ -10,7 +11,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 MAX_BYTES = 50 * 1024 * 1024
-PROPERTIES = b"""<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:resourcetype/><d:getetag/><d:getcontentlength/><d:getcontenttype/><oc:fileid/><oc:permissions/></d:prop></d:propfind>"""
+PROPERTIES = b"""<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><d:resourcetype/><d:getetag/><d:getlastmodified/><d:getcontentlength/><d:getcontenttype/><oc:fileid/><oc:permissions/></d:prop></d:propfind>"""
 
 
 class CloudError(RuntimeError):
@@ -39,6 +40,7 @@ class Source:
     size: int
     mime: str
     folder: bool
+    modified: int = 0
 
 
 class Cloud:
@@ -96,6 +98,11 @@ class Cloud:
                     int(props.findtext('{DAV:}getcontentlength', '0')),
                     props.findtext('{DAV:}getcontenttype', ''),
                     props.find('{DAV:}resourcetype/{DAV:}collection') is not None,
+                    int(
+                        parsedate_to_datetime(
+                            props.findtext('{DAV:}getlastmodified', 'Thu, 01 Jan 1970 00:00:00 GMT')
+                        ).timestamp()
+                    ),
                 )
             )
         return result
@@ -107,9 +114,12 @@ class Cloud:
         return items[0]
 
     async def download(self, path: str) -> bytes:
+        return await self.download_url(self.url(path))
+
+    async def download_url(self, url: str) -> bytes:
         chunks = []
         size = 0
-        async with self.http.stream('GET', self.url(path)) as response:
+        async with self.http.stream('GET', url) as response:
             self.check(response)
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
@@ -136,3 +146,29 @@ class Cloud:
             raise CloudError(413, 'File exceeds 50 MiB')
         response = await self.http.put(self.url(path), content=data, headers={'If-None-Match': '*'})
         self.check(response)
+
+    def versions_url(self, file_id: str) -> str:
+        username = self.root.removeprefix('/remote.php/dav/files/')
+        return '/remote.php/dav/versions/' + username + '/versions/' + quote(file_id, safe='')
+
+    async def versions(self, file_id: str, current_timestamp: int) -> list[dict]:
+        url = self.versions_url(file_id)
+        response = await self.http.request('PROPFIND', url, headers={'Depth': '1'}, content=PROPERTIES)
+        self.check(response)
+        if len(response.content) > 10 * 1024 * 1024 or b'<!DOCTYPE' in response.content.upper():
+            raise CloudError(502, 'Invalid version listing')
+        result = []
+        for node in ET.fromstring(response.content).findall('{DAV:}response'):
+            href = urlsplit(node.findtext('{DAV:}href', '')).path.rstrip('/')
+            if not href.startswith(url.rstrip('/') + '/'):
+                continue
+            version = href.rsplit('/', 1)[-1]
+            # Nextcloud lists current mtime too, but it is not a retained version file.
+            if version.isdigit() and int(version) != current_timestamp:
+                result.append({'version': version, 'timestamp': int(version)})
+        return sorted(result, key=lambda item: item['timestamp'], reverse=True)
+
+    async def version_bytes(self, file_id: str, version: str) -> bytes:
+        if not version.isdigit():
+            raise ValueError('Select a version identifier from the version listing')
+        return await self.download_url(self.versions_url(file_id) + '/' + version)

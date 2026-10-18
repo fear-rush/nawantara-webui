@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr t
 RUN rm -rf /app/build/_app
 COPY --from=frontend /app/build /app/build
 COPY backend/open_webui /app/backend/open_webui
+RUN pip install --no-cache-dir fff-search==0.11.0
 COPY backend/nawantara_nextcloud /app/backend/nawantara_nextcloud
 ENV WEBUI_NAME=Nawantara
 # The deployment uses the local GGUF service; do not seed new volumes with MiniLM weights.

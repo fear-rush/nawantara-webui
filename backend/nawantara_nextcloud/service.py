@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from .client import Cloud, CloudError, Source, in_scope, path_name
 from .embeddings import Purpose
 from .extraction import SUPPORTED, chunks, extract
+from .search import MODES
 from .store import Store
 
 Embed = Callable[[list[str], Purpose], Awaitable[list[list[float]]]]
@@ -124,41 +124,49 @@ class Service:
         self.store.synced(job['user_id'])
         return progress
 
-    async def search(self, user_id: str, query: str) -> dict:
+    async def search(self, user_id: str, query: str, mode: str = 'hybrid') -> dict:
         if not query.strip() or len(query) > 4000:
             raise ValueError('Enter a query of 1 to 4000 characters')
+        if mode not in MODES:
+            raise ValueError('Unknown search mode')
         account = self.store.connection(user_id)
-        vector = (await self.embed([query], 'query'))[0]
-        candidates = []
-        for doc in self.store.documents(user_id):
-            if doc['model'] != self.model or not in_scope(doc['path'], account['scopes']):
-                continue
-            for text, embedding in zip(doc['chunks'], doc['vectors'], strict=True):
-                score = similarity(vector, embedding)
-                candidates.append((score, doc, text))
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        results = []
-        checked = {}
+        documents = []
         async with self.cloud(account) as cloud:
-            for score, doc, text in candidates:
-                file_id = doc['file_id']
-                if file_id not in checked:
-                    checked[file_id] = await cloud.authorize(Source(file_id, doc['path'], doc['etag'], 0, '', False))
-                if checked[file_id]:
-                    results.append(
-                        {
-                            'file_id': file_id,
-                            'path': doc['path'],
-                            'url': self.link(file_id),
-                            'text': text,
-                            'score': score,
-                        }
-                    )
+            for doc in self.store.documents(user_id):
+                if doc['model'] != self.model or not in_scope(doc['path'], account['scopes']):
+                    continue
+                if await cloud.authorize(Source(doc['file_id'], doc['path'], doc['etag'], 0, '', False)):
+                    documents.append(doc)
                 else:
-                    self.store.remove_document(user_id, file_id)
+                    self.store.remove_document(user_id, doc['file_id'])
+        vector = (await self.embed([query], 'query'))[0] if mode in {'hybrid', 'semantic'} else None
+        ranked = await asyncio.to_thread(self.store.search.search, user_id, documents, query, mode, vector)
+        results = []
+        # Recheck the selected results after ranking to cover changes during a search.
+        async with self.cloud(account) as cloud:
+            for hit in ranked:
+                doc = hit['doc']
+                if not await cloud.authorize(Source(doc['file_id'], doc['path'], doc['etag'], 0, '', False)):
+                    self.store.remove_document(user_id, doc['file_id'])
+                    continue
+                results.append(
+                    {
+                        'file_id': doc['file_id'],
+                        'path': doc['path'],
+                        'url': self.link(doc['file_id']),
+                        'text': hit['text'],
+                        'score': hit['score'],
+                        'search_mode': mode,
+                        'revision': doc['etag'],
+                        'passage': hit['chunk'],
+                        'character_start': (hit['chunk'] - 1) * 1400,
+                        'character_end': (hit['chunk'] - 1) * 1400 + len(hit['text']),
+                    }
+                )
                 if len(results) == 8:
                     break
         if self.store.connection(user_id)['generation'] != account['generation']:
+            self.store.search.invalidate(user_id)
             raise ValueError('Account connection changed')
         return {'sources': results}
 
@@ -168,6 +176,8 @@ class Service:
             entries = await cloud.listing(path_name(path))
             results = []
             for source in entries:
+                if source.path == path_name(path):
+                    continue
                 if source.folder or await cloud.authorize(source):
                     results.append(
                         {
@@ -221,10 +231,3 @@ class Service:
             result = {'saved': True, 'file_id': source.file_id, 'url': self.link(source.file_id)}
             self.store.update(job['id'], 'processing', 'saved', result)
         return result
-
-
-def similarity(left: list[float], right: list[float]) -> float:
-    if len(left) != len(right):
-        return -1.0
-    norm = math.sqrt(sum(x * x for x in left) * sum(x * x for x in right))
-    return sum(a * b for a, b in zip(left, right, strict=True)) / norm if norm else 0.0

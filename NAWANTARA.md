@@ -58,3 +58,12 @@ for file-row density and typography. Its sidebar link uses the same icon slot,
 text size, spacing and active treatment as Workspace, with a shared Nextcloud
 mark in both expanded and collapsed navigation. Keep these references when
 changing the page instead of introducing a separate dashboard style.
+
+Search modes, snapshots and reciprocal-rank fusion live in `search.py`. FFF's
+Python binding runs with AI mode off; invalid regex fallback results must be
+rejected. `evidence.py` handles current-access-checked version comparison.
+`actions.py` restricts Context Agent MCP operations and stores owner-confirmed
+proposals. Never add the confirmation endpoint as a model tool. `analysis.py`
+passes selected bytes to the fixed-image broker and stores private generated files.
+`events.py` coalesces authenticated file notifications without treating event data
+as an access grant. Rebuild runtime images after changing pinned dependencies.

@@ -7,6 +7,11 @@ export type CloudSource = {
 	url: string;
 	text: string;
 	score: number;
+	search_mode: string;
+	revision: string;
+	passage: number;
+	character_start: number;
+	character_end: number;
 };
 export type CloudConnection = {
 	connected: boolean;

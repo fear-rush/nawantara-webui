@@ -13,6 +13,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from .activity import record
+from .search import SearchPool
 
 
 class Store:
@@ -20,6 +21,7 @@ class Store:
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / 'nextcloud.sqlite3'
         self.cipher = Fernet(key.encode())
+        self.search = SearchPool()
         with self.db() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
@@ -43,6 +45,13 @@ class Store:
                     occurred REAL NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, details TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id,id);
                 CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created DESC,id DESC);
+                CREATE TABLE IF NOT EXISTS action_proposals (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, operation TEXT NOT NULL,
+                    payload BLOB NOT NULL, status TEXT NOT NULL, result BLOB NOT NULL,
+                    created REAL NOT NULL, updated REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS analysis_runs (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, result BLOB NOT NULL, created REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS index_notifications (user_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS processing_state (name TEXT PRIMARY KEY, value REAL NOT NULL);
             """)
         self.path.chmod(0o600)
@@ -67,6 +76,7 @@ class Store:
             db.execute('DELETE FROM documents WHERE model != ?', (model,))
 
     def connect(self, user_id: str, username: str, password: str, scopes: list[str], instance: str) -> None:
+        self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('DELETE FROM documents WHERE user_id=?', (user_id,))
             db.execute("UPDATE jobs SET cancel=1 WHERE user_id=? AND status IN ('queued','processing')", (user_id,))
@@ -94,8 +104,12 @@ class Store:
         }
 
     def disconnect(self, user_id: str) -> None:
+        self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('DELETE FROM connections WHERE user_id=?', (user_id,))
+            db.execute('DELETE FROM analysis_runs WHERE user_id=?', (user_id,))
+            db.execute('DELETE FROM action_proposals WHERE user_id=?', (user_id,))
+            db.execute('DELETE FROM index_notifications WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM exclusions WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM documents WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM job_events WHERE job_id IN (SELECT id FROM jobs WHERE user_id=?)', (user_id,))
@@ -120,7 +134,7 @@ class Store:
                 "VALUES (?,?,?,'queued','queued',?,?,?)",
                 (job_id, user_id, action, self.cipher.encrypt(json.dumps(payload).encode()), now, now),
             )
-            if origin not in {'queued', 'scheduled', 'connection', 'followup'}:
+            if origin not in {'queued', 'scheduled', 'connection', 'followup', 'event'}:
                 raise ValueError('Unknown job origin')
             record(db, job_id, 'queued', origin)
         return job_id
@@ -201,6 +215,7 @@ class Store:
         ]
 
     def put_document(self, user_id: str, source: dict, generation: str) -> None:
+        self.search.invalidate(user_id)
         with self.db() as db:
             account = db.execute('SELECT generation FROM connections WHERE user_id=?', (user_id,)).fetchone()
             if account is None or account['generation'] != generation:
@@ -224,6 +239,7 @@ class Store:
             )
 
     def remove_document(self, user_id: str, file_id: str) -> None:
+        self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('DELETE FROM documents WHERE user_id=? AND file_id=?', (user_id, file_id))
 
@@ -240,6 +256,7 @@ class Store:
 
     def interrupt(self) -> None:
         with self.db() as db:
+            db.execute("UPDATE action_proposals SET status='uncertain' WHERE status='executing'")
             rows = db.execute("SELECT id FROM jobs WHERE status='processing'").fetchall()
             db.execute(
                 "UPDATE jobs SET status='interrupted',stage='interrupted',updated=?,"
@@ -250,6 +267,7 @@ class Store:
                 record(db, row['id'], 'interrupted', 'interrupted')
 
     def exclude(self, user_id: str, file_id: str) -> None:
+        self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('INSERT OR IGNORE INTO exclusions VALUES (?,?)', (user_id, file_id))
             db.execute('DELETE FROM documents WHERE user_id=? AND file_id=?', (user_id, file_id))

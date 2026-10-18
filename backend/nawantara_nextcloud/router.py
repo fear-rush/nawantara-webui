@@ -83,9 +83,9 @@ async def files(request: Request, path: str = '/', user: UserModel = Depends(ses
 
 
 @router.get('/search')
-async def search(request: Request, query: str, user: UserModel = Depends(session)) -> dict:
+async def search(request: Request, query: str, user: UserModel = Depends(session), mode: str = 'hybrid') -> dict:
     api = await service(request.app)
-    return await safe_call(api.search(user.id, query))
+    return await safe_call(api.search(user.id, query, mode))
 
 
 @router.get('/read')
@@ -178,3 +178,160 @@ async def admin_job_detail(job_id: str, request: Request, user: UserModel = Depe
     account = await Users.get_user_by_id(result['job']['user_id'])
     result['job']['user_name'] = account.name if account else 'Deleted account'
     return result
+
+
+@router.get('/versions')
+async def versions(request: Request, path: str, user: UserModel = Depends(session)) -> dict:
+    from . import evidence
+
+    return await safe_call(evidence.versions(await service(request.app), user.id, path))
+
+
+@router.get('/compare')
+async def compare(
+    request: Request,
+    left: str,
+    right: str,
+    left_version: str = '',
+    right_version: str = '',
+    user: UserModel = Depends(session),
+) -> dict:
+    from . import evidence
+
+    return await safe_call(
+        evidence.compare(await service(request.app), user.id, left, right, left_version, right_version)
+    )
+
+
+@router.post('/events')
+async def change_event(request: Request) -> dict:
+    import hmac
+    import json
+    import os
+
+    from .events import notify
+
+    secret = os.environ.get('NEXTCLOUD_EVENT_SECRET', '')
+    if not secret or not hmac.compare_digest(request.headers.get('authorization', ''), 'Bearer ' + secret):
+        raise HTTPException(401, 'Invalid event authentication')
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > 65536:
+            raise HTTPException(413, 'Event exceeds size limit')
+    try:
+        payload = json.loads(data)
+        if not isinstance(payload, dict):
+            raise ValueError('Expected an event object')
+        count = notify(store(request.app), payload)
+    except (ValueError, TypeError):
+        raise HTTPException(400, 'Invalid event payload') from None
+    return {'accepted': True, 'accounts_notified': count}
+
+
+class AnalysisForm(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=10)
+    code: str = Field(min_length=1, max_length=40000)
+
+
+@router.post('/analysis')
+async def analyze(body: AnalysisForm, request: Request, user: UserModel = Depends(session)) -> dict:
+    from . import analysis
+
+    return await safe_call(analysis.run(await service(request.app), user.id, body.paths, body.code))
+
+
+@router.get('/analysis/{run_id}/files/{name}')
+async def analysis_file(run_id: str, name: str, request: Request, user: UserModel = Depends(session)):
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    from .analysis import file_bytes
+
+    try:
+        data = file_bytes(store(request.app), user.id, run_id, name)
+    except ValueError:
+        raise HTTPException(404, 'Analysis file unavailable') from None
+    return Response(
+        data,
+        media_type='application/octet-stream',
+        headers={
+            'Content-Disposition': "attachment; filename*=UTF-8''" + quote(name, safe=''),
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+        },
+    )
+
+
+@router.get('/actions/tools')
+async def action_tools(request: Request, user: UserModel = Depends(session)) -> dict:
+    from .actions import mcp
+
+    return {'tools': await safe_call(mcp(store(request.app).connection(user.id)))}
+
+
+class ActionForm(BaseModel):
+    operation: str = Field(max_length=100)
+    arguments: dict = Field(default_factory=dict)
+
+
+@router.post('/actions/read')
+async def action_read(body: ActionForm, request: Request, user: UserModel = Depends(session)) -> dict:
+    from .actions import read
+
+    return await safe_call(read(store(request.app), user.id, body.operation, body.arguments))
+
+
+@router.post('/actions/propose')
+async def action_propose(body: ActionForm, request: Request, user: UserModel = Depends(session)) -> dict:
+    from .actions import propose
+
+    return await safe_call(propose(store(request.app), user.id, body.operation, body.arguments))
+
+
+@router.get('/actions')
+async def action_list(request: Request, user: UserModel = Depends(session)) -> dict:
+    from .actions import listing
+
+    return {'actions': listing(store(request.app), user.id)}
+
+
+class ConfirmationForm(BaseModel):
+    approve: bool
+
+
+@router.post('/actions/{action_id}/confirm')
+async def action_confirm(
+    action_id: str, body: ConfirmationForm, request: Request, user: UserModel = Depends(session)
+) -> dict:
+    from .actions import confirm
+
+    return await safe_call(confirm(store(request.app), user.id, action_id, body.approve))
+
+
+class AnalysisSaveForm(BaseModel):
+    run_id: str = Field(max_length=64)
+    name: str = Field(max_length=200)
+    path: str = Field(min_length=2, max_length=1000)
+
+
+@router.post('/analysis/save')
+async def save_analysis(body: AnalysisSaveForm, request: Request, user: UserModel = Depends(session)) -> dict:
+    from .analysis import file_bytes
+
+    db = store(request.app)
+    try:
+        file_bytes(db, user.id, body.run_id, body.name)
+        job_id = db.enqueue(
+            user.id,
+            'save',
+            {
+                'path': path_name(body.path),
+                'analysis_id': body.run_id,
+                'analysis_file': body.name,
+            },
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
+    return {'job_id': job_id}
