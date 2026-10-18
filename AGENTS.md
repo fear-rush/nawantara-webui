@@ -4,7 +4,7 @@ Workspace setup and user flows live in `../../docs/`. Run integrated development
 commands from `../..`; this checkout retains its own Git history and checks.
 
 This is the Open WebUI fork used by `nawantara-workspace`.
-The `upstream` remote tracks Open WebUI; `nawantara` contains our changes.
+The `upstream` remote tracks Open WebUI; `main` contains our changes.
 
 - Edit source directly. Do not patch compiled bundles or copy changes from another repo.
 - Nextcloud integration lives in `backend/nawantara_nextcloud/`; its account and file UI is `src/routes/(app)/nextcloud`.

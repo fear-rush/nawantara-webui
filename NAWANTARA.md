@@ -14,7 +14,7 @@ branding, Nextcloud connections and Document Activity, without rewriting generat
 Keep `upstream` pointed at `https://github.com/open-webui/open-webui.git`.
 Fetch upstream and merge a chosen release on an upgrade branch. Review API and
 dependency changes, update the runtime image pin, and validate before merging
-into `nawantara`. Do not automatically follow upstream main.
+into `main`. Do not automatically follow upstream main.
 
 The frontend serves port 5173 and uses the isolated backend on 3001. Production
 uses port 3000. See [development](../../docs/development.md) for initialization,
@@ -38,3 +38,10 @@ The Docker runtime includes English/Indonesian Tesseract and Poppler. HTTP acces
 PDF extraction and embeddings are verified through the workspace live check;
 additional OCR checks run inside the release container. Application credentials
 are encrypted using `NEXTCLOUD_CREDENTIAL_KEY`; keep the key with backups.
+
+Embeddings use the workspace's internal llama.cpp service with the pinned
+EmbeddingGemma 2 Q8_0 text model. `embeddings.py` owns query/document prompts,
+vector validation and the index contract. Do not use the local SentenceTransformers
+loader for this deployment. Changing weights or prompts requires a new index
+contract and rebuilding derived vectors. Native private-file retrieval uses the
+same local endpoint, with prefixes supplied through Compose.

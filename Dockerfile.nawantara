@@ -17,3 +17,6 @@ COPY --from=frontend /app/build /app/build
 COPY backend/open_webui /app/backend/open_webui
 COPY backend/nawantara_nextcloud /app/backend/nawantara_nextcloud
 ENV WEBUI_NAME=Nawantara
+# The deployment uses the local GGUF service; do not seed new volumes with MiniLM weights.
+RUN rm -rf /app/backend/data/cache/embedding/models/models--sentence-transformers--all-MiniLM-L6-v2 /app/backend/data/cache/embedding/models/.locks/models--sentence-transformers--all-MiniLM-L6-v2
+ENV RAG_EMBEDDING_ENGINE=openai RAG_EMBEDDING_MODEL=embeddinggemma-2-Q8_0 RAG_OPENAI_API_BASE_URL=http://embedding:8080/v1

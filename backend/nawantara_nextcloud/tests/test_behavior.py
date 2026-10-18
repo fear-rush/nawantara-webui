@@ -17,7 +17,7 @@ from nawantara_nextcloud.service import Service
 from nawantara_nextcloud.store import Store
 
 
-async def embed(texts: list[str]) -> list[list[float]]:
+async def embed(texts: list[str], purpose: str) -> list[list[float]]:
     return [[1.0, 0.0] for _ in texts]
 
 

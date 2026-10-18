@@ -49,6 +49,15 @@ class Store:
         finally:
             db.close()
 
+    def discard_other_embeddings(self, model: str) -> None:
+        """Delete incompatible derived vectors and schedule their owners for rebuilding."""
+        with self.db() as db:
+            db.execute(
+                'UPDATE connections SET synced=0 WHERE user_id IN (SELECT user_id FROM documents WHERE model != ?)',
+                (model,),
+            )
+            db.execute('DELETE FROM documents WHERE model != ?', (model,))
+
     def connect(self, user_id: str, username: str, password: str, scopes: list[str], instance: str) -> None:
         with self.db() as db:
             db.execute('DELETE FROM documents WHERE user_id=?', (user_id,))

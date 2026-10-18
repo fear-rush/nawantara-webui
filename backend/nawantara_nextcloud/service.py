@@ -9,10 +9,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from .client import Cloud, CloudError, Source, in_scope, path_name
+from .embeddings import Purpose
 from .extraction import SUPPORTED, chunks, extract
 from .store import Store
 
-Embed = Callable[[list[str]], Awaitable[list[list[float]]]]
+Embed = Callable[[list[str], Purpose], Awaitable[list[list[float]]]]
 
 
 class Service:
@@ -90,7 +91,7 @@ class Service:
             self.store.update(job['id'], 'processing', 'embedding')
             vectors = []
             for start in range(0, len(parts), 32):
-                vectors.extend(await self.embed(parts[start : start + 32]))
+                vectors.extend(await self.embed(parts[start : start + 32], 'document'))
             if not await cloud.authorize(source):
                 raise ValueError('Source changed or access was revoked during indexing')
             self.store.put_document(
@@ -117,7 +118,7 @@ class Service:
         if not query.strip() or len(query) > 4000:
             raise ValueError('Enter a query of 1 to 4000 characters')
         account = self.store.connection(user_id)
-        vector = (await self.embed([query]))[0]
+        vector = (await self.embed([query], 'query'))[0]
         candidates = []
         for doc in self.store.documents(user_id):
             if doc['model'] != self.model or not in_scope(doc['path'], account['scopes']):

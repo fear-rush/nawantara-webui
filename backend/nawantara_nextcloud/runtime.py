@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from .embeddings import BASE_URL, INDEX_MODEL, MODEL, Purpose, encode
 from .service import Service
 from .store import Store
 
@@ -23,13 +24,20 @@ def store(app: FastAPI) -> Store:
 async def service(app: FastAPI) -> Service:
     from open_webui.models.config import Config
 
-    config = await Config.get_many('rag.embedding_engine', 'rag.embedding_model')
-    model = str(config['rag.embedding_engine']) + ':' + str(config['rag.embedding_model'])
+    config = await Config.get_many('rag.embedding_engine', 'rag.embedding_model', 'rag.openai.api_base_url')
+    if (config['rag.embedding_engine'], config['rag.embedding_model'], config['rag.openai.api_base_url']) != (
+        'openai',
+        MODEL,
+        BASE_URL,
+    ):
+        raise ValueError('Run workspace setup to configure the required local embedding service')
 
-    async def embed(texts: list[str]) -> list[list[float]]:
-        return await app.state.EMBEDDING_FUNCTION(texts)
+    async def embed(texts: list[str], purpose: Purpose) -> list[list[float]]:
+        return await encode(app.state.EMBEDDING_FUNCTION, texts, purpose)
 
-    return Service(store(app), os.environ['NEXTCLOUD_INTERNAL_URL'], os.environ['NEXTCLOUD_PUBLIC_URL'], embed, model)
+    return Service(
+        store(app), os.environ['NEXTCLOUD_INTERNAL_URL'], os.environ['NEXTCLOUD_PUBLIC_URL'], embed, INDEX_MODEL
+    )
 
 
 async def attachment(user_id: str, file_id: str) -> bytes:
@@ -50,9 +58,9 @@ async def attachment(user_id: str, file_id: str) -> bytes:
 async def execute(app: FastAPI, job: dict) -> None:
     from open_webui.models.users import Users
 
-    api = await service(app)
-    db = api.store
+    db = store(app)
     try:
+        api = await service(app)
         user = await Users.get_user_by_id(job['user_id'])
         if user is None or user.role not in {'admin', 'user'}:
             raise ValueError('Account is unavailable')
@@ -116,4 +124,5 @@ def start(app: FastAPI) -> asyncio.Task:
     app.state.nextcloud_store = Store(
         Path(os.environ.get('DATA_DIR', '/app/backend/data')), os.environ['NEXTCLOUD_CREDENTIAL_KEY']
     )
+    store(app).discard_other_embeddings(INDEX_MODEL)
     return asyncio.create_task(run(app))
