@@ -1,0 +1,14 @@
+FROM node:22-alpine3.20 AS frontend
+WORKDIR /app
+ENV CYPRESS_INSTALL_BINARY=0 NODE_OPTIONS=--max-old-space-size=6144
+COPY package.json package-lock.json ./
+RUN npm ci --force
+COPY . .
+RUN npm run crypto:verify && npx vite build
+
+FROM ghcr.io/open-webui/open-webui:v0.12.3@sha256:a537bbe1e6b428820f52ed4a029d7fff97062e24d5cf32c365fba36fd0542def
+RUN rm -rf /app/build/_app
+COPY --from=frontend /app/build /app/build
+COPY backend/open_webui /app/backend/open_webui
+COPY backend/nawantara_activity.py /app/backend/nawantara_activity.py
+ENV WEBUI_NAME=Nawantara

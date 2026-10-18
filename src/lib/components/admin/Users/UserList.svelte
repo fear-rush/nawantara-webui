@@ -511,7 +511,7 @@
 					<!-- LICENSE covers this Open WebUI wordmark.
 					Do not alter, remove, obscure, or replace it except as LICENSE permits:
 					https://docs.openwebui.com/license. -->
-					{$i18n.t('Running Open WebUI for a team?')}
+					{$i18n.t('Running Nawantara for a team?')}
 				</div>
 				<div class="mt-2 space-y-2">
 					<p>
@@ -519,7 +519,7 @@
 						Do not alter, remove, obscure, or replace it except as LICENSE permits:
 						https://docs.openwebui.com/license. -->
 						{$i18n.t(
-							'You have more than 50 users, which often means this workspace is supporting organizational use. Open WebUI is free to use as-is, with no restrictions or hidden limits, and we want to keep it that way.'
+							'You have more than 50 users, which often means this workspace is supporting organizational use. Nawantara is free to use as-is, with no restrictions or hidden limits, and we want to keep it that way.'
 						)}
 					</p>
 					<p class="text-gray-500 dark:text-gray-400">
@@ -527,7 +527,7 @@
 						Do not alter, remove, obscure, or replace it except as LICENSE permits:
 						https://docs.openwebui.com/license. -->
 						{$i18n.t(
-							'By supporting the project through sponsorship or an enterprise license, you help us stay independent, ship new features faster, improve stability, and grow Open WebUI for the long haul.'
+							'By supporting the project through sponsorship or an enterprise license, you help us stay independent, ship new features faster, improve stability, and grow Nawantara for the long haul.'
 						)}
 					</p>
 					<p class="text-gray-500 dark:text-gray-400">

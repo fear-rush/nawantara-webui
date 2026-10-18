@@ -557,7 +557,7 @@
 											{$i18n.t('Forward cookies')}
 										</label>
 										<p class="text-xs text-gray-500">
-											{$i18n.t('Forward cookies from your Open WebUI request to this server.')}
+											{$i18n.t('Forward cookies from your Nawantara request to this server.')}
 										</p>
 									</div>
 									<Switch

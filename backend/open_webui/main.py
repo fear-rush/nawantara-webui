@@ -3112,6 +3112,9 @@ async def check_db_health():
     return {'status': True}
 
 
+from nawantara_activity import install
+install(app)
+
 # --- static assets & files ---
 # Windows registry entries can override these with text/plain, which breaks module and wasm loading
 mimetypes.add_type('text/javascript', '.js')
