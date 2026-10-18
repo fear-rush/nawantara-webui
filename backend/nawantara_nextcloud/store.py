@@ -12,6 +12,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from .activity import record
+
 
 class Store:
     def __init__(self, directory: Path, key: str) -> None:
@@ -36,6 +38,12 @@ class Store:
                     status TEXT NOT NULL, stage TEXT NOT NULL, payload BLOB NOT NULL,
                     result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '',
                     cancel INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, updated REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS job_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+                    occurred REAL NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, details TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS job_events_job ON job_events(job_id,id);
+                CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created DESC,id DESC);
+                CREATE TABLE IF NOT EXISTS processing_state (name TEXT PRIMARY KEY, value REAL NOT NULL);
             """)
         self.path.chmod(0o600)
 
@@ -90,9 +98,10 @@ class Store:
             db.execute('DELETE FROM connections WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM exclusions WHERE user_id=?', (user_id,))
             db.execute('DELETE FROM documents WHERE user_id=?', (user_id,))
+            db.execute('DELETE FROM job_events WHERE job_id IN (SELECT id FROM jobs WHERE user_id=?)', (user_id,))
             db.execute('DELETE FROM jobs WHERE user_id=?', (user_id,))
 
-    def enqueue(self, user_id: str, action: str, payload: dict) -> str:
+    def enqueue(self, user_id: str, action: str, payload: dict, *, origin: str = 'queued') -> str:
         account = self.connection(user_id)
         payload = {**payload, 'generation': account['generation']}
         job_id = uuid.uuid4().hex
@@ -111,6 +120,9 @@ class Store:
                 "VALUES (?,?,?,'queued','queued',?,?,?)",
                 (job_id, user_id, action, self.cipher.encrypt(json.dumps(payload).encode()), now, now),
             )
+            if origin not in {'queued', 'scheduled', 'connection', 'followup'}:
+                raise ValueError('Unknown job origin')
+            record(db, job_id, 'queued', origin)
         return job_id
 
     def claim(self) -> dict | None:
@@ -119,7 +131,10 @@ class Store:
             row = db.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY created LIMIT 1").fetchone()
             if row is None:
                 return None
-            db.execute("UPDATE jobs SET status='processing',updated=? WHERE id=?", (time.time(), row['id']))
+            db.execute(
+                "UPDATE jobs SET status='processing',stage='starting',updated=? WHERE id=?", (time.time(), row['id'])
+            )
+            record(db, row['id'], 'processing', 'starting')
         return {
             **dict(row),
             'payload': json.loads(self.cipher.decrypt(row['payload'])),
@@ -128,12 +143,15 @@ class Store:
 
     def update(self, job_id: str, status: str, stage: str, result: dict | None = None, error: str = '') -> None:
         with self.db() as db:
-            db.execute(
+            changed = db.execute(
                 'UPDATE jobs SET status=?,stage=?,error=?,updated=? WHERE id=?',
                 (status, stage, error, time.time(), job_id),
-            )
+            ).rowcount
+            if not changed:
+                return
             if result is not None:
                 db.execute('UPDATE jobs SET result=? WHERE id=?', (json.dumps(result), job_id))
+            record(db, job_id, status, stage, result)
 
     def jobs(self, user_id: str | None) -> list[dict]:
         with self.db() as db:
@@ -147,20 +165,28 @@ class Store:
 
     def control(self, job_id: str, user_id: str, operation: str) -> None:
         with self.db() as db:
-            if operation == 'cancel':
+            row = db.execute('SELECT status FROM jobs WHERE id=? AND user_id=?', (job_id, user_id)).fetchone()
+            if row is None:
+                raise ValueError('Job not found')
+            if operation == 'cancel' and row['status'] in {'queued', 'processing'}:
+                status = 'cancelled' if row['status'] == 'queued' else 'processing'
                 db.execute(
-                    "UPDATE jobs SET cancel=1, status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END "
-                    "WHERE id=? AND user_id=? AND status IN ('queued','processing')",
-                    (job_id, user_id),
+                    'UPDATE jobs SET cancel=1,status=?,stage=?,updated=? WHERE id=?',
+                    (status, 'cancellation_requested', time.time(), job_id),
                 )
-            elif operation == 'retry':
+                record(db, job_id, status, 'cancellation_requested')
+            elif operation == 'retry' and row['status'] in {'failed', 'interrupted', 'cancelled'}:
                 db.execute(
-                    "UPDATE jobs SET status='queued',cancel=0,error='' WHERE id=? AND user_id=? "
-                    "AND status IN ('failed','interrupted','cancelled')",
-                    (job_id, user_id),
+                    "UPDATE jobs SET status='queued',stage='retry_queued',cancel=0,error='',updated=? WHERE id=?",
+                    (time.time(), job_id),
                 )
+                record(db, job_id, 'queued', 'retry_queued')
             else:
-                raise ValueError('Unknown job action')
+                raise ValueError('This action is not available for the current job status')
+
+    def heartbeat(self) -> None:
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO processing_state VALUES ('heartbeat',?)", (time.time(),))
 
     def cancelled(self, job_id: str) -> bool:
         with self.db() as db:
@@ -214,10 +240,14 @@ class Store:
 
     def interrupt(self) -> None:
         with self.db() as db:
+            rows = db.execute("SELECT id FROM jobs WHERE status='processing'").fetchall()
             db.execute(
-                "UPDATE jobs SET status='interrupted',error='Processing interrupted. "
-                "Retry to reconcile the saved checkpoint.' WHERE status='processing'"
+                "UPDATE jobs SET status='interrupted',stage='interrupted',updated=?,"
+                "error='Processing interrupted. Retry to reconcile the saved checkpoint.' WHERE status='processing'",
+                (time.time(),),
             )
+            for row in rows:
+                record(db, row['id'], 'interrupted', 'interrupted')
 
     def exclude(self, user_id: str, file_id: str) -> None:
         with self.db() as db:

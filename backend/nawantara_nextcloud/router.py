@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from open_webui.models.users import UserModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from open_webui.models.users import UserModel, Users
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from pydantic import BaseModel, Field
 
+from . import activity
 from .client import CloudError, path_name
 from .runtime import attachment, service, store
 
@@ -128,10 +129,52 @@ async def jobs(request: Request, user: UserModel = Depends(session)) -> dict:
 
 @router.post('/jobs/{job_id}')
 async def control(job_id: str, body: ControlForm, request: Request, user: UserModel = Depends(session)) -> dict:
-    store(request.app).control(job_id, user.id, body.operation)
+    try:
+        store(request.app).control(job_id, user.id, body.operation)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from None
     return {'accepted': True}
 
 
+@router.get('/jobs/{job_id}')
+async def job_detail(job_id: str, request: Request, user: UserModel = Depends(session)) -> dict:
+    try:
+        return activity.detail(store(request.app), job_id, user.id)
+    except KeyError:
+        raise HTTPException(404, 'Job not found') from None
+
+
 @router.get('/admin/jobs')
-async def admin_jobs(request: Request, user: UserModel = Depends(get_admin_user)) -> dict:
-    return {'jobs': store(request.app).jobs(None)}
+async def admin_jobs(
+    request: Request,
+    user: UserModel = Depends(get_admin_user),
+    page: int = Query(1, ge=1),
+    status: str = Query('', pattern='^(|active|attention|queued|processing|completed|failed|cancelled|interrupted)$'),
+    action: str = Query('', pattern='^(|index|save)$'),
+    actor: str = Query('', max_length=255),
+    query: str = Query('', max_length=64),
+    since: float = Query(0, ge=0),
+) -> dict:
+    result = activity.listing(
+        store(request.app), page=page, status=status, action=action, actor=actor, query=query, since=since
+    )
+    actors = []
+    for user_id in result['actors']:
+        account = await Users.get_user_by_id(user_id)
+        actors.append({'id': user_id, 'name': account.name if account else 'Deleted account'})
+    names = {item['id']: item['name'] for item in actors}
+    for job in result['jobs']:
+        job['user_name'] = names.get(job['user_id'], 'Deleted account')
+    result['actors'] = actors
+    return result
+
+
+@router.get('/admin/jobs/{job_id}')
+async def admin_job_detail(job_id: str, request: Request, user: UserModel = Depends(get_admin_user)) -> dict:
+    try:
+        result = activity.detail(store(request.app), job_id)
+    except KeyError:
+        raise HTTPException(404, 'Job not found') from None
+    account = await Users.get_user_by_id(result['job']['user_id'])
+    result['job']['user_name'] = account.name if account else 'Deleted account'
+    return result

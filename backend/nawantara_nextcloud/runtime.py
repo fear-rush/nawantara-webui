@@ -82,7 +82,7 @@ async def execute(app: FastAPI, job: dict) -> None:
                 )
                 result = await api.save(job, cloud, data)
                 if not db.cancelled(job['id']):
-                    result['index_job_id'] = db.enqueue(job['user_id'], 'index', {})
+                    result['index_job_id'] = db.enqueue(job['user_id'], 'index', {}, origin='followup')
             cancelled = db.cancelled(job['id'])
             db.update(
                 job['id'], 'cancelled' if cancelled else 'completed', 'cancelled' if cancelled else 'completed', result
@@ -109,15 +109,26 @@ async def run(app: FastAPI) -> None:
         except BlockingIOError:
             return
         store(app).interrupt()
-        while True:
-            for user_id in store(app).due_accounts():
-                store(app).enqueue(user_id, 'index', {})
-                store(app).synced(user_id)
-            job = store(app).claim()
-            if job:
-                await execute(app, job)
-            else:
-                await asyncio.sleep(2)
+
+        async def pulse() -> None:
+            while True:
+                store(app).heartbeat()
+                await asyncio.sleep(15)
+
+        heartbeat = asyncio.create_task(pulse())
+        try:
+            while True:
+                for user_id in store(app).due_accounts():
+                    store(app).enqueue(user_id, 'index', {}, origin='scheduled')
+                    store(app).synced(user_id)
+                job = store(app).claim()
+                if job:
+                    await execute(app, job)
+                else:
+                    await asyncio.sleep(2)
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
 
 
 def start(app: FastAPI) -> asyncio.Task:

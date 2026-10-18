@@ -44,7 +44,7 @@ class Service:
                 if not (await cloud.stat(scope)).folder:
                     raise ValueError('Indexing scopes must be folders')
         self.store.connect(user_id, identity, password, scopes, self.base)
-        self.store.enqueue(user_id, 'index', {})
+        self.store.enqueue(user_id, 'index', {}, origin='connection')
 
     async def discover(self, cloud: Cloud, scopes: list[str]) -> list[Source]:
         pending = list(scopes)
@@ -69,26 +69,34 @@ class Service:
         return list(sources.values())
 
     async def index(self, job: dict, account: dict, cloud: Cloud) -> dict:
+        self.store.update(job['id'], 'processing', 'discovering')
         sources = await self.discover(cloud, account['scopes'])
         previous = {d['file_id']: d for d in self.store.documents(job['user_id'])}
         visible = {source.file_id for source in sources}
         count = 0
+        progress = {'total': len(sources), 'processed': 0, 'indexed': 0, 'skipped': 0}
         for source in sources:
             if source.file_id in self.store.excluded(job['user_id']):
+                progress['skipped'] += 1
+                progress['processed'] += 1
                 continue
             if self.store.cancelled(job['id']):
                 return {'indexed': count}
             if Path(source.path).suffix.lower() not in SUPPORTED:
+                progress['skipped'] += 1
+                progress['processed'] += 1
                 continue
             old = previous.get(source.file_id)
             if old and old['etag'] == source.etag and old['path'] == source.path and old['model'] == self.model:
                 count += 1
+                progress['processed'] += 1
+                progress['indexed'] = count
                 continue
-            self.store.update(job['id'], 'processing', 'extracting')
+            self.store.update(job['id'], 'processing', 'extracting', progress)
             data = await cloud.download(source.path)
             text = await asyncio.to_thread(extract, source.path, data)
             parts = chunks(text)
-            self.store.update(job['id'], 'processing', 'embedding')
+            self.store.update(job['id'], 'processing', 'embedding', progress)
             vectors = []
             for start in range(0, len(parts), 32):
                 vectors.extend(await self.embed(parts[start : start + 32], 'document'))
@@ -108,11 +116,13 @@ class Service:
                 account['generation'],
             )
             count += 1
+            progress['processed'] += 1
+            progress['indexed'] = count
         # Only a complete successful traversal can retire absent entries.
         for file_id in previous.keys() - visible:
             self.store.remove_document(job['user_id'], file_id)
         self.store.synced(job['user_id'])
-        return {'indexed': count}
+        return progress
 
     async def search(self, user_id: str, query: str) -> dict:
         if not query.strip() or len(query) > 4000:

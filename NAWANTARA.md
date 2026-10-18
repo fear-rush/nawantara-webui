@@ -45,3 +45,16 @@ vector validation and the index contract. Do not use the local SentenceTransform
 loader for this deployment. Changing weights or prompts requires a new index
 contract and rebuilding derived vectors. Native private-file retrieval uses the
 same local endpoint, with prefixes supplied through Compose.
+
+Nextcloud UI components reuse the application theme, badges, confirmation dialogs
+and modal. Document Activity uses paginated server filters and safe job events
+from `activity.py`; never send raw payloads, source links or extracted text to
+admin responses. The shared job-detail component switches between owner and
+admin endpoints, which enforce their own authorization independently of the UI.
+
+The Nextcloud page follows `routes/(app)/workspace/+layout.svelte` for its
+full-width content and compact top navigation, and `workspace/Knowledge.svelte`
+for file-row density and typography. Its sidebar link uses the same icon slot,
+text size, spacing and active treatment as Workspace, with a shared Nextcloud
+mark in both expanded and collapsed navigation. Keep these references when
+changing the page instead of introducing a separate dashboard style.

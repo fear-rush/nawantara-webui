@@ -179,7 +179,8 @@ class NextcloudBehavior(unittest.IsolatedAsyncioTestCase):
 
     def test_user_cannot_cancel_another_users_job(self) -> None:
         job_id = self.store.enqueue('alice', 'index', {})
-        self.store.control(job_id, 'bob', 'cancel')
+        with self.assertRaises(ValueError):
+            self.store.control(job_id, 'bob', 'cancel')
         self.assertFalse(self.store.cancelled(job_id))
 
 
