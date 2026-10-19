@@ -8,12 +8,43 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from cryptography.fernet import Fernet
 
 from .activity import record
 from .search import SearchPool
+
+# One row per document, keyed by the representation chosen as its indexed text.
+DOCUMENT_COLUMNS = (
+    'user_id',
+    'file_id',
+    'path',
+    'etag',
+    'digest',
+    'chunks',
+    'vectors',
+    'model',
+    'record_id',
+    'fingerprint',
+    'title',
+    'original_file_id',
+    'original_path',
+    'original_etag',
+    'representations',
+)
+
+DOCUMENTS_SQL = """
+    CREATE TABLE IF NOT EXISTS documents (
+        user_id TEXT NOT NULL, file_id TEXT NOT NULL, path TEXT NOT NULL,
+        etag TEXT NOT NULL, digest TEXT NOT NULL, chunks TEXT NOT NULL,
+        vectors TEXT NOT NULL, model TEXT NOT NULL, record_id TEXT NOT NULL DEFAULT '',
+        fingerprint TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+        original_file_id TEXT NOT NULL DEFAULT '', original_path TEXT NOT NULL DEFAULT '',
+        original_etag TEXT NOT NULL DEFAULT '', representations TEXT NOT NULL DEFAULT '[]',
+        PRIMARY KEY(user_id, file_id));
+    CREATE INDEX IF NOT EXISTS documents_record ON documents(user_id, record_id);
+"""
 
 
 class Store:
@@ -29,11 +60,6 @@ class Store:
                     user_id TEXT PRIMARY KEY, username TEXT NOT NULL, secret BLOB NOT NULL,
                     scopes TEXT NOT NULL, generation TEXT NOT NULL, instance TEXT NOT NULL,
                     synced REAL NOT NULL DEFAULT 0);
-                CREATE TABLE IF NOT EXISTS documents (
-                    user_id TEXT NOT NULL, file_id TEXT NOT NULL, path TEXT NOT NULL,
-                    etag TEXT NOT NULL, digest TEXT NOT NULL, chunks TEXT NOT NULL,
-                    vectors TEXT NOT NULL, model TEXT NOT NULL,
-                    PRIMARY KEY(user_id, file_id));
                 CREATE TABLE IF NOT EXISTS exclusions (user_id TEXT, file_id TEXT, PRIMARY KEY(user_id,file_id));
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, action TEXT NOT NULL,
@@ -52,7 +78,16 @@ class Store:
                 CREATE TABLE IF NOT EXISTS index_notifications (user_id TEXT PRIMARY KEY, revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS processing_state (name TEXT PRIMARY KEY, value REAL NOT NULL);
             """)
+            self.prepare_documents(db)
         self.path.chmod(0o600)
+
+    def prepare_documents(self, db: sqlite3.Connection) -> None:
+        """Rebuild the derived index when its shape changes rather than migrating it."""
+        existing = [row[1] for row in db.execute('PRAGMA table_info(documents)')]
+        if existing and existing != list(DOCUMENT_COLUMNS):
+            db.execute('DROP TABLE documents')
+            db.execute('UPDATE connections SET synced=0')
+        db.executescript(DOCUMENTS_SQL)
 
     @contextmanager
     def db(self) -> Iterator[sqlite3.Connection]:
@@ -208,7 +243,13 @@ class Store:
         with self.db() as db:
             rows = db.execute('SELECT * FROM documents WHERE user_id=?', (user_id,)).fetchall()
         return [
-            {**dict(row), 'chunks': json.loads(row['chunks']), 'vectors': json.loads(row['vectors'])} for row in rows
+            {
+                **dict(row),
+                'chunks': json.loads(row['chunks']),
+                'vectors': json.loads(row['vectors']),
+                'representations': json.loads(row['representations']),
+            }
+            for row in rows
         ]
 
     def put_document(self, user_id: str, source: dict, generation: str) -> None:
@@ -221,24 +262,57 @@ class Store:
                 'SELECT 1 FROM exclusions WHERE user_id=? AND file_id=?', (user_id, source['file_id'])
             ).fetchone():
                 return
+            file_id = source['file_id']
+            path = source['path']
             db.execute(
-                'INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)',
+                'INSERT OR REPLACE INTO documents(' + ','.join(DOCUMENT_COLUMNS) + ')'
+                ' VALUES (' + ','.join('?' * len(DOCUMENT_COLUMNS)) + ')',
                 (
                     user_id,
-                    source['file_id'],
-                    source['path'],
+                    file_id,
+                    path,
                     source['etag'],
                     source['digest'],
                     json.dumps(source['chunks']),
                     json.dumps(source['vectors']),
                     source['model'],
+                    source.get('record_id') or file_id,
+                    source.get('fingerprint') or source['etag'],
+                    source.get('title') or PurePosixPath(path).name,
+                    source.get('original_file_id') or file_id,
+                    source.get('original_path') or path,
+                    source.get('original_etag') or source['etag'],
+                    json.dumps(source.get('representations') or []),
                 ),
             )
+
+    def add_representations(self, user_id: str, record_id: str, members: list[dict]) -> bool:
+        """Attach a byte-identical publication's files to an already indexed document."""
+        self.search.invalidate(user_id)
+        with self.db() as db:
+            row = db.execute(
+                'SELECT representations FROM documents WHERE user_id=? AND record_id=?', (user_id, record_id)
+            ).fetchone()
+            if row is None:
+                return False
+            known = json.loads(row['representations'])
+            existing = {item['file_id'] for item in known}
+            known.extend(member for member in members if member['file_id'] not in existing)
+            db.execute(
+                'UPDATE documents SET representations=? WHERE user_id=? AND record_id=?',
+                (json.dumps(known), user_id, record_id),
+            )
+            return True
 
     def remove_document(self, user_id: str, file_id: str) -> None:
         self.search.invalidate(user_id)
         with self.db() as db:
             db.execute('DELETE FROM documents WHERE user_id=? AND file_id=?', (user_id, file_id))
+
+    def remove_record(self, user_id: str, record_id: str) -> None:
+        self.search.invalidate(user_id)
+        with self.db() as db:
+            db.execute('DELETE FROM documents WHERE user_id=? AND record_id=?', (user_id, record_id))
 
     def due_accounts(self) -> list[str]:
         with self.db() as db:

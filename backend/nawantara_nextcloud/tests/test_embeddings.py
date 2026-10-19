@@ -1,15 +1,103 @@
 """Protect the embedding contract from incorrect prompts and unusable vectors."""
 
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import httpx
 from cryptography.fernet import Fernet
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from nawantara_nextcloud.embeddings import DIMENSIONS, INDEX_MODEL, encode
+from nawantara_nextcloud import embeddings
+from nawantara_nextcloud.embeddings import DIMENSIONS, INDEX_MODEL, encode, index_model, voyage_encode
 from nawantara_nextcloud.store import Store
+
+VOYAGE_VECTOR = [0.5, 0.5] + [0.0] * (embeddings.VOYAGE_DEFAULT_DIMENSIONS - 2)
+
+
+class VoyageProvider(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.saved = dict(embeddings.os.environ)
+        embeddings.os.environ['VOYAGE_API_KEY'] = 'test-key'
+
+    def tearDown(self) -> None:
+        embeddings.os.environ.clear()
+        embeddings.os.environ.update(self.saved)
+
+    async def test_document_and_query_use_input_type_instead_of_prefixes(self) -> None:
+        seen = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            seen.append(body)
+            self.assertEqual(request.headers['authorization'], 'Bearer test-key')
+            self.assertEqual(request.url.path, '/v1/embeddings')
+            return httpx.Response(
+                200,
+                json={'data': [{'index': index, 'embedding': VOYAGE_VECTOR} for index in range(len(body['input']))]},
+            )
+
+        transport = httpx.MockTransport(respond)
+        await voyage_encode(['query text'], 'query', transport=transport)
+        await voyage_encode(['passage text'], 'document', transport=transport)
+        self.assertEqual([body['input_type'] for body in seen], ['query', 'document'])
+        self.assertEqual([body['input'] for body in seen], [['query text'], ['passage text']])
+        self.assertNotIn('title: none | text: ', json.dumps(seen))
+
+    async def test_unordered_response_is_reassembled_by_index(self) -> None:
+        def respond(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    'data': [
+                        {'index': 1, 'embedding': [0.0, 1.0] + [0.0] * (embeddings.VOYAGE_DEFAULT_DIMENSIONS - 2)},
+                        {'index': 0, 'embedding': VOYAGE_VECTOR},
+                    ]
+                },
+            )
+
+        vectors = await voyage_encode(['first', 'second'], 'document', transport=httpx.MockTransport(respond))
+        self.assertEqual(vectors[0], VOYAGE_VECTOR)
+        self.assertEqual(vectors[1][1], 1.0)
+
+    async def test_rate_limit_is_retried_then_reported_without_body_text(self) -> None:
+        calls = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            return httpx.Response(429, text='secret passage text from the document')
+
+        with self.assertRaises(ValueError) as caught:
+            await voyage_encode(['passage'], 'document', transport=httpx.MockTransport(respond))
+        self.assertEqual(len(calls), embeddings.VOYAGE_ATTEMPTS)
+        self.assertNotIn('secret passage text', str(caught.exception))
+
+    async def test_missing_key_and_wrong_dimension_fail_closed(self) -> None:
+        embeddings.os.environ['VOYAGE_API_KEY'] = ''
+        with self.assertRaises(ValueError):
+            await voyage_encode(['passage'], 'document')
+        embeddings.os.environ['VOYAGE_API_KEY'] = 'test-key'
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={'data': [{'index': 0, 'embedding': [1.0, 0.0]}]})
+
+        with self.assertRaises(ValueError):
+            await voyage_encode(['passage'], 'document', transport=httpx.MockTransport(respond))
+
+    def test_provider_switch_changes_the_index_identity_and_batch(self) -> None:
+        embeddings.os.environ['NEXTCLOUD_EMBEDDING_PROVIDER'] = 'local'
+        local = index_model()
+        self.assertEqual(local, INDEX_MODEL)
+        self.assertEqual(embeddings.batch_size(), embeddings.LOCAL_BATCH)
+        embeddings.os.environ['NEXTCLOUD_EMBEDDING_PROVIDER'] = 'voyage'
+        self.assertEqual(index_model(), 'voyage:voyage-4:input-type-v1:1024')
+        self.assertEqual(embeddings.batch_size(), embeddings.VOYAGE_BATCH)
+        self.assertNotEqual(index_model(), local)
+        embeddings.os.environ['NEXTCLOUD_EMBEDDING_PROVIDER'] = 'nonsense'
+        with self.assertRaises(ValueError):
+            index_model()
 
 
 class EmbeddingBehavior(unittest.IsolatedAsyncioTestCase):

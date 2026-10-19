@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from .embeddings import BASE_URL, INDEX_MODEL, MODEL, Purpose, encode
+from .embeddings import BASE_URL, MODEL, Purpose, batch_size, encode, index_model, provider, voyage_encode
 from .events import dispatch
 from .service import Service
 from .store import Store
@@ -22,7 +22,15 @@ def store(app: FastAPI) -> Store:
     return app.state.nextcloud_store
 
 
-async def service(app: FastAPI) -> Service:
+async def embedder(app: FastAPI):
+    """Choose the embedding contract and fail closed when it is not usable."""
+    if provider() == 'voyage':
+
+        async def embed(texts: list[str], purpose: Purpose) -> list[list[float]]:
+            return await voyage_encode(texts, purpose)
+
+        return embed
+
     from open_webui.models.config import Config
 
     config = await Config.get_many('rag.embedding_engine', 'rag.embedding_model', 'rag.openai.api_base_url')
@@ -36,8 +44,17 @@ async def service(app: FastAPI) -> Service:
     async def embed(texts: list[str], purpose: Purpose) -> list[list[float]]:
         return await encode(app.state.EMBEDDING_FUNCTION, texts, purpose)
 
+    return embed
+
+
+async def service(app: FastAPI) -> Service:
     return Service(
-        store(app), os.environ['NEXTCLOUD_INTERNAL_URL'], os.environ['NEXTCLOUD_PUBLIC_URL'], embed, INDEX_MODEL
+        store(app),
+        os.environ['NEXTCLOUD_INTERNAL_URL'],
+        os.environ['NEXTCLOUD_PUBLIC_URL'],
+        await embedder(app),
+        index_model(),
+        batch=batch_size(),
     )
 
 
@@ -138,5 +155,5 @@ def start(app: FastAPI) -> asyncio.Task:
     app.state.nextcloud_store = Store(
         Path(os.environ.get('DATA_DIR', '/app/backend/data')), os.environ['NEXTCLOUD_CREDENTIAL_KEY']
     )
-    store(app).discard_other_embeddings(INDEX_MODEL)
+    store(app).discard_other_embeddings(index_model())
     return asyncio.create_task(run(app))
