@@ -1,13 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { mobile, showSidebar, WEBUI_NAME } from '$lib/stores';
-	import {
-		nextcloud,
-		type CloudConnection,
-		type CloudFile,
-		type CloudSource,
-		type Job
-	} from '$lib/apis/nextcloud';
+	import { nextcloud, type CloudConnection, type CloudFile, type Job } from '$lib/apis/nextcloud';
 	import Badge from '$lib/components/common/Badge.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
@@ -16,13 +10,11 @@
 	import Document from '$lib/components/icons/Document.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
 	import ArrowUpRight from '$lib/components/icons/ArrowUpLeft.svelte';
-	import JobDetail from '$lib/components/nextcloud/JobDetail.svelte';
 	import { workspaceUi as ui, label, badge, date } from '$lib/components/nextcloud/presentation';
 	let connection: CloudConnection = { connected: false, url: '' };
 	let tab = 'files';
 	const tabs = [
 		{ id: 'files', label: 'Files' },
-		{ id: 'search', label: 'Search' },
 		{ id: 'save', label: 'Save findings' },
 		{ id: 'activity', label: 'Activity' },
 		{ id: 'actions', label: 'Actions' },
@@ -30,20 +22,15 @@
 	];
 	let username = '';
 	let password = '';
-	let scopes = '/Documents';
 	let folder = '/';
-	let query = '';
-	let searchMode = 'hybrid';
 	let destination = '/Documents/findings.md';
 	let text = '';
 	let error = '';
 	let message = '';
 	let busy = false;
 	let loaded = false;
-	let searched = false;
 	let browsed = false;
 	let files: CloudFile[] = [];
-	let sources: CloudSource[] = [];
 	let jobs: Job[] = [];
 	let proposals: {
 		id: string;
@@ -56,8 +43,6 @@
 	let proposalId = '';
 	let confirmAction = false;
 	let jobFilter = '';
-	let jobId = '';
-	let showDetail = false;
 	let confirmDisconnect = false;
 	let confirmSave = false;
 	const controller = new AbortController();
@@ -90,8 +75,6 @@
 		proposals = pending.actions;
 		if (!result.connected) {
 			files = [];
-			sources = [];
-			searched = false;
 			browsed = false;
 		}
 	}
@@ -122,37 +105,14 @@
 		);
 		browsed = true;
 	}
-	async function search() {
-		sources = (
-			await nextcloud<{ sources: CloudSource[] }>(
-				`/search?query=${encodeURIComponent(query)}&mode=${searchMode}`,
-				'GET',
-				undefined,
-				controller.signal
-			)
-		).sources;
-		searched = true;
-	}
 	async function connect() {
 		const secret = password;
 		password = '';
-		await nextcloud(
-			'/connection',
-			'POST',
-			{
-				username,
-				app_password: secret,
-				scopes: scopes
-					.split('\n')
-					.map((s) => s.trim())
-					.filter(Boolean)
-			},
-			controller.signal
-		);
+		await nextcloud('/connection', 'POST', { username, app_password: secret }, controller.signal);
 		await refresh();
 		tab = 'files';
-		await browse(connection.scopes?.[0] ?? '/');
-		message = 'Account connected. Indexing is queued.';
+		await browse('/');
+		message = 'Account connected.';
 	}
 	async function save() {
 		await nextcloud('/save', 'POST', { path: destination, text }, controller.signal);
@@ -175,7 +135,7 @@
 		(async () => {
 			await action(async () => {
 				await refresh();
-				if (connection.connected) await browse(connection.scopes?.[0] ?? '/');
+				if (connection.connected) await browse('/');
 				else tab = 'connection';
 			});
 			loaded = true;
@@ -195,7 +155,6 @@
 </script>
 
 <svelte:head><title>Nextcloud / {$WEBUI_NAME}</title></svelte:head>
-<JobDetail bind:show={showDetail} {jobId} />
 <ConfirmDialog
 	bind:show={confirmAction}
 	title="Execute this Nextcloud action?"
@@ -218,7 +177,7 @@
 <ConfirmDialog
 	bind:show={confirmDisconnect}
 	title="Disconnect Nextcloud?"
-	message="This removes your connection, index and processing history. Original files in Nextcloud are kept."
+	message="This removes your connection and its processing history. Original files in Nextcloud are kept."
 	confirmLabel="Disconnect"
 	onConfirm={() => action(disconnect)}
 />
@@ -273,21 +232,9 @@
 					<Spinner className="size-6" />
 				</div>{:else}
 				{#if connection.connected}<div
-						class="flex h-8 items-center justify-between gap-2 px-1 text-xs text-gray-500"
+						class="flex h-8 items-center gap-2 px-1 text-xs text-gray-500"
 					>
-						<span class="truncate" title={connection.scopes?.join(', ')}
-							>{connection.username}
-							<span class="ml-2 text-gray-400">{connection.scopes?.join(', ')}</span></span
-						>
-						<button
-							class={ui.button}
-							disabled={busy}
-							on:click={() =>
-								action(async () => {
-									await nextcloud('/index', 'POST', {}, controller.signal);
-									message = 'Index refresh queued.';
-								})}>Refresh index</button
-						>
+						<span class="truncate">{connection.username}</span>
 					</div>{/if}
 				{#if error}<div
 						role="alert"
@@ -358,89 +305,6 @@
 									</p>
 								</div>{/if}
 						</div>
-					</section>
-				{:else if connection.connected && tab === 'search'}
-					<section class="space-y-4">
-						<div>
-							<h2 class="text-sm font-medium">Search indexed content</h2>
-							<p class="text-xs text-gray-500 mt-1">
-								Search passages in files you can currently access.
-							</p>
-						</div>
-						<form class="flex gap-2" on:submit|preventDefault={() => action(search)}>
-							<div class="relative grow">
-								<Search className="absolute left-2 top-2 size-3.5 text-gray-400" /><label
-									class="sr-only"
-									for="cloud-query">Search query</label
-								><input
-									id="cloud-query"
-									class="{ui.input} pl-7"
-									bind:value={query}
-									required
-									maxlength="4000"
-									placeholder="Ask a question or search your documents"
-								/>
-							</div>
-							<label class="shrink-0"
-								><span class="sr-only">Search mode</span><select
-									class={ui.input}
-									bind:value={searchMode}
-								>
-									<option value="hybrid">Hybrid</option><option value="semantic">Semantic</option
-									><option value="keyword">Keyword</option><option value="literal">Literal</option
-									><option value="regex">Regex</option><option value="fuzzy">Fuzzy</option><option
-										value="filename">Filename</option
-									>
-								</select></label
-							><button class={ui.primary} disabled={busy}>Search</button>
-						</form>
-						{#if searched}<p class="text-xs text-gray-500">
-								{sources.length} matching passages
-							</p>{/if}
-						{#each sources as source, index (`${source.file_id}-${index}`)}<article
-								class="{ui.panel} space-y-3"
-							>
-								<a
-									class="flex items-center gap-2 text-sm font-medium hover:underline"
-									href={source.url}
-									target="_blank"
-									rel="noopener noreferrer"
-									><Document className="size-4 shrink-0" /><span class="break-all"
-										>{source.path}</span
-									><ArrowUpRight className="rotate-90 size-3.5 shrink-0" /></a
-								>
-								<p class="text-xs text-gray-500">
-									Passage {source.passage}, extracted characters {source.character_start}–{source.character_end}.
-									Revision {source.revision}
-								</p>
-								<p
-									class="text-sm leading-relaxed text-gray-600 dark:text-gray-300 whitespace-pre-wrap"
-								>
-									{source.text}
-								</p>
-								<button
-									class="text-xs text-gray-500 hover:text-gray-900 dark:hover:text-white underline"
-									disabled={busy}
-									on:click={() =>
-										action(async () => {
-											await nextcloud(
-												`/index/${encodeURIComponent(source.file_id)}`,
-												'DELETE',
-												undefined,
-												controller.signal
-											);
-											sources = sources.filter((s) => s.file_id !== source.file_id);
-											message = 'Excluded from your index. The original remains in Nextcloud.';
-										})}>Exclude file from my index</button
-								>
-							</article>{/each}
-						{#if searched && !sources.length}<div class="py-12 text-center">
-								<Search className="size-7 mx-auto text-gray-400" />
-								<p class="text-sm font-medium mt-3">No indexed passages available</p>
-								<p class="text-xs text-gray-500 mt-1">
-									Check your indexing folders and processing jobs, or refresh the index.
-								</p>
-							</div>{/if}
 					</section>
 				{:else if connection.connected && tab === 'actions'}
 					<section class="space-y-3">
@@ -546,7 +410,7 @@
 							>
 						</div>
 						<p class="text-xs text-gray-500">
-							Latest 100 jobs. Saving a file and indexing it are separate jobs.
+							Latest 100 jobs. A queued save is not yet a saved file.
 						</p>
 						<div class="space-y-2">
 							{#each displayedJobs as job (job.id)}<article
@@ -562,22 +426,14 @@
 													>{label(job.stage)}</span
 												>{/if}
 										</p>
-										{#if job.result.indexed !== undefined}<p class="text-xs text-gray-500">
-												{job.result.indexed} indexed files
-											</p>{/if}{#if job.error}<p
+										{#if job.error}<p
 												class="text-sm text-red-600 dark:text-red-400 max-w-xl"
 											>
 												{job.error}
 											</p>{/if}
 									</div>
 									<div class="flex flex-wrap items-center gap-2">
-										<button
-											class={ui.button}
-											on:click={() => {
-												jobId = job.id;
-												showDetail = true;
-											}}>View log</button
-										>{#if ['queued', 'processing'].includes(job.status)}<button
+										{#if ['queued', 'processing'].includes(job.status)}<button
 												class={ui.button}
 												disabled={busy || !!job.cancel}
 												on:click={() => action(() => control(job.id, 'cancel'))}
@@ -615,18 +471,8 @@
 										>{connection.username}</span
 									>
 								</div>
-								<div>
-									<h3 class="text-xs text-gray-500 mb-2">Indexing folders</h3>
-									<ul class="space-y-1">
-										{#each connection.scopes ?? [] as scope}<li
-												class="flex items-center gap-2 text-sm"
-											>
-												<Folder className="size-4 text-gray-400" />{scope}
-											</li>{/each}
-									</ul>
-								</div>
 								<p class="text-xs text-gray-500">
-									To change the account or indexing folders, disconnect and connect again.
+									To change the account, disconnect and connect again.
 								</p>
 								<button
 									class="{ui.button} text-red-600 dark:text-red-400"
@@ -634,8 +480,7 @@
 									on:click={() => (confirmDisconnect = true)}>Disconnect account</button
 								>
 							</div>{:else}<p class="text-sm text-gray-500">
-								Create an app password in Nextcloud under Personal settings, Security. Choose
-								existing folders to index.
+								Create an app password in Nextcloud under Personal settings, Security.
 							</p>
 							<form class="space-y-4" on:submit|preventDefault={() => action(connect)}>
 								<label class="block text-sm font-medium"
@@ -653,15 +498,6 @@
 										required
 										autocomplete="new-password"
 									/></label
-								><label class="block text-sm font-medium"
-									>Indexing folders<textarea
-										class="{ui.input} mt-2"
-										bind:value={scopes}
-										required
-										rows="3"
-									></textarea><span class="block text-xs text-gray-500 font-normal mt-1.5"
-										>One absolute folder path per line.</span
-									></label
 								><button class={ui.primary} disabled={busy}>Connect account</button>
 							</form>{/if}
 					</section>

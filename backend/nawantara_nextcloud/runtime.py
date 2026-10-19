@@ -10,8 +10,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from .embeddings import BASE_URL, MODEL, Purpose, batch_size, encode, index_model, provider, voyage_encode
-from .events import dispatch
 from .service import Service
 from .store import Store
 
@@ -22,40 +20,8 @@ def store(app: FastAPI) -> Store:
     return app.state.nextcloud_store
 
 
-async def embedder(app: FastAPI):
-    """Choose the embedding contract and fail closed when it is not usable."""
-    if provider() == 'voyage':
-
-        async def embed(texts: list[str], purpose: Purpose) -> list[list[float]]:
-            return await voyage_encode(texts, purpose)
-
-        return embed
-
-    from open_webui.models.config import Config
-
-    config = await Config.get_many('rag.embedding_engine', 'rag.embedding_model', 'rag.openai.api_base_url')
-    if (config['rag.embedding_engine'], config['rag.embedding_model'], config['rag.openai.api_base_url']) != (
-        'openai',
-        MODEL,
-        BASE_URL,
-    ):
-        raise ValueError('Run workspace setup to configure the required local embedding service')
-
-    async def embed(texts: list[str], purpose: Purpose) -> list[list[float]]:
-        return await encode(app.state.EMBEDDING_FUNCTION, texts, purpose)
-
-    return embed
-
-
 async def service(app: FastAPI) -> Service:
-    return Service(
-        store(app),
-        os.environ['NEXTCLOUD_INTERNAL_URL'],
-        os.environ['NEXTCLOUD_PUBLIC_URL'],
-        await embedder(app),
-        index_model(),
-        batch=batch_size(),
-    )
+    return Service(store(app), os.environ['NEXTCLOUD_INTERNAL_URL'], os.environ['NEXTCLOUD_PUBLIC_URL'])
 
 
 async def attachment(user_id: str, file_id: str) -> bytes:
@@ -88,23 +54,16 @@ async def execute(app: FastAPI, job: dict) -> None:
         if db.cancelled(job['id']):
             db.update(job['id'], 'cancelled', 'cancelled')
             return
+        payload = job['payload']
+        data = (
+            await attachment(job['user_id'], payload['file_id']) if payload.get('file_id') else payload['text'].encode()
+        )
         async with api.cloud(account) as cloud:
-            if job['action'] == 'index':
-                result = await api.index(job, account, cloud)
-            else:
-                payload = job['payload']
-                data = (
-                    await attachment(job['user_id'], payload['file_id'])
-                    if payload.get('file_id')
-                    else payload['text'].encode()
-                )
-                result = await api.save(job, cloud, data)
-                if not db.cancelled(job['id']):
-                    result['index_job_id'] = db.enqueue(job['user_id'], 'index', {}, origin='followup')
-            cancelled = db.cancelled(job['id'])
-            db.update(
-                job['id'], 'cancelled' if cancelled else 'completed', 'cancelled' if cancelled else 'completed', result
-            )
+            result = await api.save(job, cloud, data)
+        cancelled = db.cancelled(job['id'])
+        db.update(
+            job['id'], 'cancelled' if cancelled else 'completed', 'cancelled' if cancelled else 'completed', result
+        )
     except Exception as error:
         # Diagnostic types are safe; exception bodies can include document text or credentials.
         log.warning('Nextcloud job %s failed (%s)', job['id'], type(error).__name__)
@@ -113,7 +72,7 @@ async def execute(app: FastAPI, job: dict) -> None:
             'failed',
             'failed',
             error=(
-                'Processing failed. Check the connection, source access, file format and destination. '
+                'Saving failed. Check the connection, the destination and your access to it. '
                 'Retry reconciles the saved checkpoint.'
             ),
         )
@@ -136,10 +95,6 @@ async def run(app: FastAPI) -> None:
         heartbeat = asyncio.create_task(pulse())
         try:
             while True:
-                dispatch(store(app))
-                for user_id in store(app).due_accounts():
-                    store(app).enqueue(user_id, 'index', {}, origin='scheduled')
-                    store(app).synced(user_id)
                 job = store(app).claim()
                 if job:
                     await execute(app, job)
@@ -148,12 +103,10 @@ async def run(app: FastAPI) -> None:
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
-            store(app).search.close()
 
 
 def start(app: FastAPI) -> asyncio.Task:
     app.state.nextcloud_store = Store(
         Path(os.environ.get('DATA_DIR', '/app/backend/data')), os.environ['NEXTCLOUD_CREDENTIAL_KEY']
     )
-    store(app).discard_other_embeddings(index_model())
     return asyncio.create_task(run(app))

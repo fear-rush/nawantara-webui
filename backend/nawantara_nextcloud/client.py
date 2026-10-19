@@ -28,10 +28,6 @@ def path_name(value: str) -> str:
     return '/' + str(PurePosixPath('/' + value.lstrip('/'))).lstrip('/')
 
 
-def in_scope(path: str, scopes: list[str]) -> bool:
-    return any(path == scope or path.startswith(scope.rstrip('/') + '/') for scope in scopes)
-
-
 @dataclass(frozen=True)
 class Source:
     file_id: str
@@ -146,29 +142,3 @@ class Cloud:
             raise CloudError(413, 'File exceeds 50 MiB')
         response = await self.http.put(self.url(path), content=data, headers={'If-None-Match': '*'})
         self.check(response)
-
-    def versions_url(self, file_id: str) -> str:
-        username = self.root.removeprefix('/remote.php/dav/files/')
-        return '/remote.php/dav/versions/' + username + '/versions/' + quote(file_id, safe='')
-
-    async def versions(self, file_id: str, current_timestamp: int) -> list[dict]:
-        url = self.versions_url(file_id)
-        response = await self.http.request('PROPFIND', url, headers={'Depth': '1'}, content=PROPERTIES)
-        self.check(response)
-        if len(response.content) > 10 * 1024 * 1024 or b'<!DOCTYPE' in response.content.upper():
-            raise CloudError(502, 'Invalid version listing')
-        result = []
-        for node in ET.fromstring(response.content).findall('{DAV:}response'):
-            href = urlsplit(node.findtext('{DAV:}href', '')).path.rstrip('/')
-            if not href.startswith(url.rstrip('/') + '/'):
-                continue
-            version = href.rsplit('/', 1)[-1]
-            # Nextcloud lists current mtime too, but it is not a retained version file.
-            if version.isdigit() and int(version) != current_timestamp:
-                result.append({'version': version, 'timestamp': int(version)})
-        return sorted(result, key=lambda item: item['timestamp'], reverse=True)
-
-    async def version_bytes(self, file_id: str, version: str) -> bytes:
-        if not version.isdigit():
-            raise ValueError('Select a version identifier from the version listing')
-        return await self.download_url(self.versions_url(file_id) + '/' + version)

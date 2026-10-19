@@ -1,28 +1,22 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 export type CloudFile = { file_id: string; path: string; folder: boolean; url: string };
-export type CloudSource = {
+export type CloudText = {
 	file_id: string;
 	path: string;
 	url: string;
-	text: string;
-	score: number;
-	search_mode: string;
 	revision: string;
-	passage: number;
-	character_start: number;
-	character_end: number;
+	text: string;
+	truncated: boolean;
 };
 export type CloudConnection = {
 	connected: boolean;
 	username?: string;
-	scopes?: string[];
 	url: string;
 };
 export type Job = {
 	id: string;
 	user_id: string;
-	user_name?: string;
 	action: string;
 	status: string;
 	stage: string;
@@ -30,33 +24,10 @@ export type Job = {
 	cancel: number;
 	created: number;
 	updated: number;
-	progress?: Record<string, number>;
 	result: {
 		url?: string;
-		index_job_id?: string;
-		indexed?: number;
-		total?: number;
-		processed?: number;
-		skipped?: number;
+		saved?: boolean;
 	};
-};
-export type JobEvent = {
-	id: number;
-	occurred: number;
-	status: string;
-	stage: string;
-	details: Record<string, number>;
-};
-export type JobDetail = { job: Job; events: JobEvent[]; events_total: number; attempts: number };
-export type Activity = {
-	jobs: Job[];
-	total: number;
-	page: number;
-	page_size: number;
-	summary: Record<string, number>;
-	actors: { id: string; name: string }[];
-	heartbeat: number | null;
-	observed_at: number;
 };
 
 export async function nextcloud<T = unknown>(

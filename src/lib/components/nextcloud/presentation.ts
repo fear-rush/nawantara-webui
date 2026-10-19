@@ -9,11 +9,6 @@ export const ui = {
 	muted: 'text-gray-500 dark:text-gray-400'
 };
 const names: Record<string, string> = {
-	index: 'Index refresh',
-	scheduled: 'Scheduled index refresh',
-	event: 'Nextcloud change queued indexing',
-	connection: 'Account connection requested indexing',
-	followup: 'Saved file queued for indexing',
 	save: 'Save to Nextcloud',
 	queued: 'Queued',
 	processing: 'Processing',
@@ -22,9 +17,6 @@ const names: Record<string, string> = {
 	cancelled: 'Cancelled',
 	interrupted: 'Interrupted',
 	starting: 'Starting',
-	discovering: 'Discovering files',
-	extracting: 'Extracting text / OCR',
-	embedding: 'Creating embeddings',
 	saving: 'Saving file',
 	saved: 'File saved',
 	retry_queued: 'Retry queued',

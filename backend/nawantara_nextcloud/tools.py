@@ -6,16 +6,6 @@ from open_webui.models.users import UserModel
 from . import router
 
 
-async def search_nextcloud(query: str, __request__: Request, __user__: dict, mode: str = 'hybrid') -> dict:
-    """Find passages in indexed Nextcloud files you can currently read. Cite returned source URLs.
-
-    :param query: A question or search phrase.
-    :param mode: Explicit search mode: hybrid, semantic, keyword, literal, regex, fuzzy, filename.
-        Literal never switches to fuzzy.
-    """
-    return await router.search(__request__, query, UserModel(**__user__), mode)
-
-
 async def list_nextcloud_files(path: str, __request__: Request, __user__: dict) -> dict:
     """List accessible Nextcloud files and folders to choose a source or save destination.
 
@@ -25,9 +15,9 @@ async def list_nextcloud_files(path: str, __request__: Request, __user__: dict) 
 
 
 async def read_nextcloud_file(path: str, __request__: Request, __user__: dict) -> dict:
-    """Read an accessible Nextcloud source and cite its URL.
+    """Read an accessible text file and cite its URL. Other formats open in Nextcloud.
 
-    :param path: Absolute file path returned by file listing or search.
+    :param path: Absolute text file path returned by file listing.
     """
     return await router.read(__request__, path, UserModel(**__user__))
 
@@ -55,34 +45,8 @@ async def save_nextcloud_attachment(path: str, file_id: str, __request__: Reques
 
 
 async def nextcloud_job_status(__request__: Request, __user__: dict) -> dict:
-    """Check the current user's save and indexing jobs. A completed save does not imply that indexing has completed."""
+    """Check the current user's save jobs. A queued save is not yet a saved file."""
     return await router.jobs(__request__, UserModel(**__user__))
-
-
-async def list_nextcloud_versions(path: str, __request__: Request, __user__: dict) -> dict:
-    """List retained versions of a currently accessible source. Does not restore or modify it.
-
-    :param path: Absolute path of the source file.
-    """
-    return await router.versions(__request__, path, UserModel(**__user__))
-
-
-async def compare_nextcloud_documents(
-    left: str,
-    right: str,
-    __request__: Request,
-    __user__: dict,
-    left_version: str = '',
-    right_version: str = '',
-) -> dict:
-    """Compare extracted text from two accessible files or retained versions. Cite both source revisions.
-
-    :param left: Absolute path of the first file.
-    :param right: Absolute path of the second file; may be the same file for version comparison.
-    :param left_version: Version identifier from list_nextcloud_versions; empty means current.
-    :param right_version: Version identifier from list_nextcloud_versions; empty means current.
-    """
-    return await router.compare(__request__, left, right, left_version, right_version, UserModel(**__user__))
 
 
 async def list_nextcloud_actions(__request__: Request, __user__: dict) -> dict:
@@ -114,12 +78,9 @@ async def propose_nextcloud_action(operation: str, arguments: dict, __request__:
 
 
 TOOLS = [
-    search_nextcloud,
     list_nextcloud_actions,
     read_nextcloud_action,
     propose_nextcloud_action,
-    list_nextcloud_versions,
-    compare_nextcloud_documents,
     list_nextcloud_files,
     read_nextcloud_file,
     save_nextcloud_text,
