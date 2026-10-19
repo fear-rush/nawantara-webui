@@ -1,5 +1,4 @@
 <script lang="ts">
-	import NextcloudIcon from '$lib/components/icons/Nextcloud.svelte';
 	import { toast } from 'svelte-sonner';
 	import { v4 as uuidv4 } from 'uuid';
 	import Sortable from 'sortablejs';
@@ -1035,18 +1034,6 @@
 						</Tooltip>
 					</div>
 
-					<Tooltip content="Nextcloud" placement="right">
-						<a
-							href="/nextcloud"
-							on:click={itemClickHandler}
-							draggable="false"
-							class="flex size-8 items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900"
-							aria-label="Nextcloud"
-							aria-current={$page.url.pathname === '/nextcloud' ? 'page' : null}
-						>
-							<NextcloudIcon className="size-4" />
-						</a>
-					</Tooltip>
 					{#each pinnedItems as itemId (itemId)}
 						{@const meta = getMenuItemMeta(itemId)}
 						{#if meta && isMenuItemVisible(itemId)}
@@ -1273,26 +1260,6 @@
 						</div>
 
 						<div id="pinned-menu-items-list">
-							<div class="px-1 flex justify-center text-gray-700 dark:text-gray-300">
-								<a
-									href="/nextcloud"
-									on:click={itemClickHandler}
-									draggable="false"
-									aria-label="Nextcloud"
-									aria-current={$page.url.pathname === '/nextcloud' ? 'page' : null}
-									class="grow flex items-center space-x-2 rounded-xl px-2 py-1.5 transition {$page
-										.url.pathname === '/nextcloud'
-										? 'bg-black/[0.035] dark:bg-white/[0.045]'
-										: 'hover:bg-gray-100 dark:hover:bg-gray-900'}"
-								>
-									<div class="self-center flex size-4 shrink-0 items-center justify-center">
-										<NextcloudIcon className="size-4" />
-									</div>
-									<div class="flex self-center translate-y-[0.5px]">
-										<div class="self-center text-[0.8125rem] leading-5">Nextcloud</div>
-									</div>
-								</a>
-							</div>
 							{#each pinnedItems as itemId (itemId)}
 								{@const meta = getMenuItemMeta(itemId)}
 								{#if meta && isMenuItemVisible(itemId)}

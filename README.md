@@ -2,7 +2,7 @@
 > inside `nawantara-workspace`. Use the workspace [setup](../../docs/setup.md),
 > [development workflow](../../docs/development.md) and [user flows](../../docs/user-flows.md).
 > The reference material below describes the application itself. Standalone deployment
-> instructions do not configure the integrated workspace or its Nextcloud connector.
+> instructions do not configure the integrated workspace or its Paperless tool server.
 
 # Open WebUI 👋
 
